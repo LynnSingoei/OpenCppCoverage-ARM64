@@ -179,7 +179,7 @@ namespace CppCoverage
 		if (oldInstruction)
 		{
 			breakpoint_->RemoveBreakPoint(address, *oldInstruction);
-			breakpoint_->AdjustEipAfterBreakPointRemoval(hThread);
+			breakpoint_->SetInstructionPointer(hThread, addressValue);
 			return true;
 		}
 

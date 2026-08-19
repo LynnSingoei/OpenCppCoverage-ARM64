@@ -16,6 +16,9 @@
 
 #pragma once
 
+#include <array>
+#include <utility>
+#include <vector>
 #include <Windows.h>
 #include "CppCoverageExport.hpp"
 
@@ -23,23 +26,30 @@ namespace CppCoverage
 {
 	class Address;
 
+#ifdef _M_ARM64
+	using BreakPointInstruction = std::array<unsigned char, 4>;
+#else
+	using BreakPointInstruction = std::array<unsigned char, 1>;
+#endif
+
 	class CPPCOVERAGE_DLL BreakPoint
 	{
 	  public:
 		BreakPoint() = default;
 
-		static const unsigned char breakPointInstruction;
+		using Instruction = BreakPointInstruction;
+		static const Instruction breakPointInstruction;
 
 		void RemoveBreakPoint(const Address&,
-		                      unsigned char oldInstruction) const;
+		                      const Instruction& oldInstruction) const;
 
 		using InstructionCollection =
-		    std::vector<std::pair<unsigned char, DWORD64>>;
+		    std::vector<std::pair<Instruction, DWORD64>>;
 
 		InstructionCollection
 		SetBreakPoints(HANDLE hProcess, std::vector<DWORD64>&& addresses) const;
 
-		void AdjustEipAfterBreakPointRemoval(HANDLE hThread) const;
+		void SetInstructionPointer(HANDLE hThread, void* address) const;
 
 	  private:
 		BreakPoint(const BreakPoint&) = delete;

@@ -37,9 +37,9 @@ namespace CppCoverage
 		if (begin == end)
 			return;
 
-		auto firstValue = *begin;
+		const auto firstValue = *begin;
 		auto memorySpaceSize =
-		    *(end - 1) - firstValue + sizeof(BreakPoint::breakPointInstruction);
+		    *(end - 1) - firstValue + BreakPoint::breakPointInstruction.size();
 		auto firstAddress = reinterpret_cast<void*>(firstValue);
 		auto buffer = Tools::ReadProcessMemory(
 		    hProcess, firstAddress, static_cast<size_t>(memorySpaceSize));
@@ -47,15 +47,25 @@ namespace CppCoverage
 		for (auto it = begin; it < end; ++it)
 		{
 			auto index = static_cast<size_t>(*it - firstValue);
-			auto oldInstruction = buffer[index];
-			buffer[index] = BreakPoint::breakPointInstruction;
+			BreakPoint::Instruction oldInstruction;
+			std::copy_n(buffer.begin() + index,
+			            oldInstruction.size(),
+			            oldInstruction.begin());
+			std::copy(BreakPoint::breakPointInstruction.begin(),
+			          BreakPoint::breakPointInstruction.end(),
+			          buffer.begin() + index);
 			oldInstructions.emplace_back(oldInstruction, *it);
 		}
 		Tools::WriteProcessMemory(
 		    hProcess, firstAddress, &buffer[0], buffer.size());
 	}
 
-	const unsigned char BreakPoint::breakPointInstruction = 0xCC;
+#ifdef _M_ARM64
+	const BreakPoint::Instruction BreakPoint::breakPointInstruction{
+	    0x00, 0x00, 0x3E, 0xD4}; // BRK #0xF000
+#else
+	const BreakPoint::Instruction BreakPoint::breakPointInstruction{0xCC};
+#endif
 
 	//-------------------------------------------------------------------------
 	BreakPoint::InstructionCollection
@@ -64,11 +74,22 @@ namespace CppCoverage
 		InstructionCollection oldInstructions;
 
 		std::sort(addresses.begin(), addresses.end());
+		addresses.erase(std::unique(addresses.begin(), addresses.end()),
+		                addresses.end());
+
+#ifdef _M_ARM64
+		for (auto address : addresses)
+		{
+			if (address % breakPointInstruction.size() != 0)
+				THROW("ARM64 breakpoint address is not instruction-aligned.");
+		}
+#endif
+
 		auto beginRange = addresses.cbegin();
 
 		for (auto it = beginRange; it < addresses.cend(); ++it)
 		{
-			if (*it - *beginRange > 4096)
+			if (*it - *beginRange + breakPointInstruction.size() > 4096)
 			{
 				SetBreakPointsRange(hProcess, beginRange, it, oldInstructions);
 				beginRange = it;
@@ -82,28 +103,30 @@ namespace CppCoverage
 
 	//-------------------------------------------------------------------------
 	void BreakPoint::RemoveBreakPoint(const Address& address,
-	                                  unsigned char oldInstruction) const
+	                                  const Instruction& oldInstruction) const
 	{
 		Tools::WriteProcessMemory(address.GetProcessHandle(),
 		                          address.GetValue(),
-		                          &oldInstruction,
-		                          sizeof(oldInstruction));
+		                          oldInstruction.data(),
+		                          oldInstruction.size());
 	}
 
 	//-------------------------------------------------------------------------
-	void BreakPoint::AdjustEipAfterBreakPointRemoval(HANDLE hThread) const
+	void BreakPoint::SetInstructionPointer(HANDLE hThread, void* address) const
 	{
-		CONTEXT lcContext;
-		lcContext.ContextFlags = CONTEXT_ALL;
-		if (!GetThreadContext(hThread, &lcContext))
+		CONTEXT context{};
+		context.ContextFlags = CONTEXT_CONTROL;
+		if (!GetThreadContext(hThread, &context))
 			THROW_LAST_ERROR("Error in GetThreadContext", GetLastError());
 
-#ifdef _WIN64
-		--lcContext.Rip; // Move back one byte
+#if defined(_M_ARM64)
+		context.Pc = reinterpret_cast<DWORD64>(address);
+#elif defined(_WIN64)
+		context.Rip = reinterpret_cast<DWORD64>(address);
 #else
-		--lcContext.Eip; // Move back one byte
+		context.Eip = static_cast<DWORD>(reinterpret_cast<DWORD_PTR>(address));
 #endif
-		if (!SetThreadContext(hThread, &lcContext))
+		if (!SetThreadContext(hThread, &context))
 			THROW_LAST_ERROR("Error in SetThreadContext", GetLastError());
 	}
 }

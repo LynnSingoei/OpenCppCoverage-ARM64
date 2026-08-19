@@ -1,0 +1,8 @@
+<Project>
+  <Import Project="$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets"
+          Condition="Exists('$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets')" />
+  <Target Name="EnsureVcpkgIntegration" BeforeTargets="PrepareForBuild"
+          Condition="!Exists('$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets')">
+    <Error Text="Vcpkg integration was not found. Run InstallThirdPartyLibraries.ps1 or set VCPKG_ROOT to the pinned vcpkg checkout." />
+  </Target>
+</Project>

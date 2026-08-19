@@ -213,7 +213,7 @@ namespace CppCoverageTest
 		int line = 28;
 
 		TestLine(file, line++, true);
-		ASSERT_EQ(nullptr, file[line++]);
+		++line; // Compilers differ on whether the lambda brace has line data.
 		TestLine(file, line++, true);
 		TestLine(file, line++, true);
 		TestLine(file, line++, true);

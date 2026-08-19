@@ -1,0 +1,26 @@
+{
+  "name": "opencppcoverage",
+  "version-string": "0.9.9.0",
+  "dependencies": [
+    "boost-algorithm",
+    "boost-container",
+    "boost-filesystem",
+    "boost-iostreams",
+    "boost-locale",
+    "boost-log",
+    "boost-optional",
+    "boost-program-options",
+    "boost-property-tree",
+    "boost-range",
+    "boost-regex",
+    "boost-spirit",
+    "boost-uuid",
+    "ctemplate",
+    "gtest",
+    {
+      "name": "poco",
+      "default-features": false
+    },
+    "protobuf"
+  ]
+}

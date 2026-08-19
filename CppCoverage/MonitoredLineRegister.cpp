@@ -188,17 +188,17 @@ namespace CppCoverage
 				Address address{hProcess,
 				                reinterpret_cast<void*>(addressValue)};
 				const auto& lineNumbers = it->second;
+				bool keepBreakpoint = false;
 				for (auto lineNumber : lineNumbers)
 				{
-					if (!executedAddressManager_->RegisterAddress(
-					        address,
-					        path.wstring(),
-					        lineNumber,
-					        oldInstruction))
-					{
-						breakPoint_->RemoveBreakPoint(address, oldInstruction);
-					}
+					keepBreakpoint |= executedAddressManager_->RegisterAddress(
+					    address,
+					    path.wstring(),
+					    lineNumber,
+					    oldInstruction);
 				}
+				if (!keepBreakpoint)
+					breakPoint_->RemoveBreakPoint(address, oldInstruction);
 			}
 		}
 	}

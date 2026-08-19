@@ -69,6 +69,30 @@ Maintaining this project and working with its community was a valuable experienc
 - Windows Vista or higher.
 - Microsoft Visual Studio 2008 or higher all editions **including Express edition**. It should also work with previous version of Visual Studio.
 
+## Building from source
+
+The current solution supports `Win32`, `x64`, and native Windows `ARM64`.
+Visual Studio 2022 with the MSVC v142 toolset and the matching target
+architecture component is required. Dependencies are restored from the pinned
+vcpkg baseline in `vcpkg-configuration.json`.
+
+```powershell
+.\InstallThirdPartyLibraries.ps1 -Triplet arm64-windows
+msbuild CppCoverage.sln /m /p:Configuration=Debug /p:Platform=ARM64
+.\Build\Scripts\RunTests.ps1 -Platform ARM64 -Configuration Debug
+msbuild CppCoverage.sln /m /p:Configuration=Release /p:Platform=ARM64
+.\CreateRelease.ps1 -Platform ARM64 -Configuration Release
+```
+
+Use `x86-windows` with `Win32`, or `x64-windows` with `x64`, for compatibility
+builds. ARM64 tests must run on native Windows ARM64 hardware to validate
+debugger and breakpoint behavior; cross-compilation alone is not runtime
+validation. The C++/CLI fixture is excluded from ARM64 because MSVC does not
+support `/clr` for ARM64. Its source still compiles for Win32, but the automated
+Win32 run excludes the integration case because current Visual Studio provides
+no 32-bit `vstest.console` process; the case runs in the x64 gate. ARM64EC and
+ARM64X targets are not supported.
+
 ## Download
 OpenCppCoverage can be downloaded from [here](../../releases).
 
