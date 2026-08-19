@@ -1,6 +1,9 @@
 name: Toolchain probe
 
 on:
+  push:
+    branches:
+      - 'ci/**'
   workflow_dispatch:
 
 jobs:
