@@ -2,6 +2,8 @@ name: Windows builds and tests
 
 on:
   push:
+    branches-ignore:
+      - 'ci/**'
   pull_request:
   workflow_dispatch:
 

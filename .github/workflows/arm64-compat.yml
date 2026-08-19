@@ -1,0 +1,96 @@
+name: ARM64 compatibility test
+
+on:
+  push:
+    branches:
+      - 'ci/**'
+  workflow_dispatch:
+
+jobs:
+  compat:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Native ARM64 (v143)
+            runner: windows-11-arm
+            platform: ARM64
+            test_platform: ARM64
+            triplet: arm64-windows
+            artifact: arm64
+          - name: x64 baseline (v143)
+            runner: windows-2022
+            platform: x64
+            test_platform: x64
+            triplet: x64-windows
+            artifact: x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify native architecture
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\logs | Out-Null
+          $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          "OSArchitecture=$osArch" | Tee-Object artifacts\logs\env-${{ matrix.platform }}.txt
+          if ("${{ matrix.platform }}" -eq "ARM64" -and $osArch -ne "Arm64") {
+            throw "ARM64 job is not running on a native ARM64 OS (got $osArch)."
+          }
+
+      - name: Cache installed dependencies
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**') }}
+
+      - name: Restore pinned dependencies
+        shell: pwsh
+        run: |
+          & .\InstallThirdPartyLibraries.ps1 -Triplet ${{ matrix.triplet }} 2>&1 |
+            Tee-Object artifacts\logs\restore-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Debug with v143 toolset
+        shell: pwsh
+        run: |
+          msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
+            /p:PlatformToolset=v143 `
+            /fl "/flp:logfile=artifacts\logs\build-Debug-${{ matrix.platform }}.log;verbosity=normal"
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Debug -LogDirectory artifacts\logs
+
+      - name: Verify produced binaries are ${{ matrix.platform }}
+        if: always()
+        shell: pwsh
+        run: |
+          $outDir = "${{ matrix.platform }}\Debug"
+          if (-not (Test-Path $outDir)) { "No output directory $outDir"; exit 0 }
+          Get-ChildItem $outDir -Include *.exe,*.dll -Recurse | ForEach-Object {
+            $fs = [System.IO.File]::OpenRead($_.FullName)
+            $br = New-Object System.IO.BinaryReader($fs)
+            $fs.Position = 0x3C
+            $peOff = $br.ReadInt32()
+            $fs.Position = $peOff + 4
+            $machine = $br.ReadUInt16()
+            $br.Close()
+            $arch = switch ($machine) { 0xAA64 {"ARM64"} 0x8664 {"x64"} 0x14C {"x86"} default {"0x{0:X}" -f $machine} }
+            "{0,-45} {1}" -f $_.Name, $arch
+          } | Tee-Object artifacts\logs\pe-machine-${{ matrix.platform }}.txt
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-logs-${{ matrix.artifact }}
+          path: artifacts/logs
