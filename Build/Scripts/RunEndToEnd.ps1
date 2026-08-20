@@ -5,7 +5,14 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
 
-    [string]$LogDirectory = (Join-Path $PSScriptRoot "..\..\artifacts\test-logs")
+    [string]$LogDirectory = (Join-Path $PSScriptRoot "..\..\artifacts\test-logs"),
+
+    # When set, the OpenCppCoverage.exe under test is taken from a staged or
+    # re-expanded package instead of the build output, so the artifact that is
+    # actually shipped is the one proven to work.
+    [string]$PackageRoot = "",
+
+    [string]$Label = "build"
 )
 
 # End-to-end proof that the built OpenCppCoverage really instruments a native
@@ -27,7 +34,12 @@ $outputDirectory = switch ($Platform) {
 
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
 
+$suffix = if ($Label -eq "build") { "$Platform-$Configuration" } else { "$Platform-$Configuration-$Label" }
+
 $openCppCoverage = Join-Path $outputDirectory "OpenCppCoverage.exe"
+if ($PackageRoot) {
+    $openCppCoverage = Join-Path $PackageRoot "Binaries\OpenCppCoverage.exe"
+}
 $testConsole = Join-Path $outputDirectory "TestCoverageConsole.exe"
 $sourceFile = Join-Path $repositoryRoot "TestCoverageConsole\TestBasic.cpp"
 
@@ -62,9 +74,9 @@ if (-not $unreachableLine) {
     exit 1
 }
 
-$reportPath = Join-Path $LogDirectory "e2e-cobertura-$Platform-$Configuration.xml"
+$reportPath = Join-Path $LogDirectory "e2e-cobertura-$suffix.xml"
 Remove-Item $reportPath -Force -ErrorAction SilentlyContinue
-$logPath = Join-Path $LogDirectory "e2e-$Platform-$Configuration.log"
+$logPath = Join-Path $LogDirectory "e2e-$suffix.log"
 
 $arguments = @(
     "--sources", "TestCoverageConsole"
@@ -128,6 +140,8 @@ if ([int]$unreachable.hits -ne 0) {
 $summary = [pscustomobject]@{
     Platform          = $Platform
     Configuration     = $Configuration
+    Label             = $Label
+    OpenCppCoverage   = $openCppCoverage
     OSArchitecture    = "$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
     ProcessArchitecture = "$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
     CoverageExitCode  = $coverageExitCode
@@ -138,7 +152,7 @@ $summary = [pscustomobject]@{
     UnreachableHits   = [int]$unreachable.hits
     Success           = $true
 }
-$summaryPath = Join-Path $LogDirectory "e2e-summary-$Platform-$Configuration.json"
+$summaryPath = Join-Path $LogDirectory "e2e-summary-$suffix.json"
 $summary | ConvertTo-Json -Depth 4 | Set-Content -Path $summaryPath -Encoding utf8
 
 Write-Host "End-to-end coverage verified on ${Platform}|${Configuration}: $($covered.Count)/$($lines.Count) lines executed in TestBasic.cpp, unreachable line $unreachableLine correctly reported as not executed."

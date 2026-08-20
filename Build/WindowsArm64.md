@@ -126,3 +126,37 @@ author remembering to check an exit code:
    native ARM64 operating system.
 4. The ARM64 job asserts `OSArchitecture -eq Arm64` before it does anything, so
    a cross-build can never be presented as native ARM64 execution.
+5. `RunEndToEnd.ps1` runs twice: once against the build output and once, via
+   `-PackageRoot`, against the re-expanded ZIP. `Assert-Results.ps1` requires
+   both summaries, so a package that cannot start is never reported as good.
+
+## Packaging pitfalls this port had to solve
+
+Both of the following produced a payload that passed every static check while
+being either impure or completely unrunnable, which is why the packaged
+end-to-end run is a required gate rather than a nicety.
+
+### The ARM64 CRT redistributable contains an x64 DLL
+
+`VC\Redist\MSVC\<version>\arm64\Microsoft.VC*.CRT` ships an **x64**
+`vcruntime140_1.dll` alongside the ARM64 binaries; that DLL implements x64
+exception handling and has no ARM64 form. Copying the folder wholesale put a
+foreign image into the ARM64 payload and the staging PE scan rejected it:
+
+```
+Expected only ARM64 PE images under ...\Binaries\vcruntime140_1.dll. x64
+```
+
+`CreateRelease.ps1` therefore checks the machine type of every redistributable
+DLL, stages only matching ones, requires `vcruntime140.dll` and `msvcp140.dll`
+to be present afterwards, and records the rejected files in `crt-manifest.json`
+so the omission is explicit rather than silent.
+
+### The package must contain `Plugins\Exporter`
+
+`OpenCppCoverage.cpp` (`GetPluginsExportFolder`) enumerates
+`<exe folder>\Plugins\Exporter` at startup and fails with
+`directory_iterator: The system cannot find the path specified` when it is
+missing. A ZIP cannot store an empty directory, so the packager creates the
+folder and writes a `README.txt` placeholder into it. Test fixtures that the
+build drops under `Plugins` are deliberately not shipped.

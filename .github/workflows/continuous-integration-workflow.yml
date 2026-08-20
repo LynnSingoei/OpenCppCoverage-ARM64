@@ -132,7 +132,20 @@ jobs:
             Tee-Object artifacts\logs\package-${{ matrix.platform }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Final independent gate. Even if a step above were ever made
+      # Prove the artifact that ships actually works: run the re-expanded
+      # package's own OpenCppCoverage.exe, not the build output. This catches a
+      # payload that passes PE scans but is missing a runtime dependency.
+      - name: End-to-end coverage assertion (packaged)
+        shell: pwsh
+        run: |
+          $packageRoot = Get-ChildItem artifacts\expanded -Directory |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $packageRoot) { throw "No re-expanded package was found." }
+          & .\Build\Scripts\RunEndToEnd.ps1 -Platform ${{ matrix.package_platform }} `
+            -Configuration Release -LogDirectory artifacts\logs `
+            -PackageRoot $packageRoot -Label packaged 2>&1 |
+            Tee-Object artifacts\logs\e2e-packaged-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # fail-open, this re-reads the recorded results and fails the job when
       # any suite did not fully pass, or when an expected report is missing.
       - name: Verify recorded results

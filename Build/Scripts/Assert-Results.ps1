@@ -53,25 +53,29 @@ foreach ($configuration in $Configurations) {
     }
 }
 
-$e2ePath = Join-Path $LogDirectory "e2e-summary-$Platform-Release.json"
-if (-not (Test-Path $e2ePath)) {
-    $problems += "Missing end-to-end summary: $e2ePath"
-} else {
+foreach ($label in @("build", "packaged")) {
+    $suffix = if ($label -eq "build") { "$Platform-Release" } else { "$Platform-Release-$label" }
+    $e2ePath = Join-Path $LogDirectory "e2e-summary-$suffix.json"
+    if (-not (Test-Path $e2ePath)) {
+        $problems += "Missing end-to-end summary ($label): $e2ePath"
+        continue
+    }
+
     $e2e = Get-Content -LiteralPath $e2ePath -Raw | ConvertFrom-Json
     if ($e2e.Success -ne $true) {
-        $problems += "End-to-end coverage assertion did not succeed."
+        $problems += "End-to-end coverage assertion ($label) did not succeed."
     }
     if ($e2e.CoverageExitCode -ne 0) {
-        $problems += "End-to-end coverage run exited with $($e2e.CoverageExitCode)."
+        $problems += "End-to-end coverage run ($label) exited with $($e2e.CoverageExitCode)."
     }
     if ([int]$e2e.CoveredLines -le 0) {
-        $problems += "End-to-end run reported no covered lines."
+        $problems += "End-to-end run ($label) reported no covered lines."
     }
     if ([int]$e2e.UnreachableHits -ne 0) {
-        $problems += "End-to-end run reported the unreachable line as executed."
+        $problems += "End-to-end run ($label) reported the unreachable line as executed."
     }
     if ($Platform -eq "ARM64" -and $e2e.OSArchitecture -ne "Arm64") {
-        $problems += "End-to-end ARM64 evidence was produced on '$($e2e.OSArchitecture)', which is not native ARM64 execution."
+        $problems += "End-to-end ARM64 evidence ($label) was produced on '$($e2e.OSArchitecture)', which is not native ARM64 execution."
     }
 }
 

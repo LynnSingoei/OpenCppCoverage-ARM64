@@ -98,6 +98,18 @@ if (-not (Test-Path $templateDirectory)) {
 }
 Copy-Item -LiteralPath $templateDirectory -Destination $binariesDirectory -Recurse
 
+# OpenCppCoverage enumerates <exe folder>\Plugins\Exporter at startup (see
+# OpenCppCoverage.cpp GetPluginsExportFolder) and aborts when it is absent, so
+# the directory must ship even though it is normally empty. A ZIP cannot carry
+# an empty directory, hence the explanatory placeholder file. Build outputs
+# under Plugins are test fixtures and are deliberately not copied.
+$pluginsExportDirectory = Join-Path $binariesDirectory "Plugins\Exporter"
+New-Item -ItemType Directory -Force -Path $pluginsExportDirectory | Out-Null
+@(
+    "Custom coverage exporter plugins are loaded from this folder."
+    "Place exporter DLLs built for $Platform here; OpenCppCoverage requires this folder to exist."
+) | Set-Content -Path (Join-Path $pluginsExportDirectory "README.txt") -Encoding utf8
+
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) {
     throw "vswhere.exe was not found."
@@ -130,8 +142,37 @@ $crtDirectory = Get-ChildItem -Path $redistRoot -Directory |
 if (-not $crtDirectory) {
     throw "The Microsoft VC $redistArchitecture runtime was not found under $redistRoot."
 }
-Get-ChildItem -Path $crtDirectory -Filter *.dll -File |
-    Copy-Item -Destination $binariesDirectory
+
+# The redistributable folder for an architecture can contain a DLL built for a
+# different one: the arm64 CRT folder ships an x64 vcruntime140_1.dll, which is
+# only meaningful to x64 code. Copying the folder wholesale therefore puts a
+# foreign binary into the payload. Each DLL is checked and any mismatch is
+# recorded instead of staged.
+$crtStaged = @()
+$crtRejected = @()
+foreach ($crtDll in Get-ChildItem -Path $crtDirectory -Filter *.dll -File) {
+    $crtMachine = Get-PeMachine -Path $crtDll.FullName
+    if ($crtMachine.Architecture -eq $Platform) {
+        Copy-Item -LiteralPath $crtDll.FullName -Destination $binariesDirectory
+        $crtStaged += $crtDll.Name
+    }
+    else {
+        $crtRejected += [pscustomobject]@{
+            Name         = $crtDll.Name
+            Architecture = $crtMachine.Architecture
+            Machine      = $crtMachine.Machine
+            Source       = $crtDll.FullName
+        }
+    }
+}
+if ($crtStaged.Count -eq 0) {
+    throw "No $Platform CRT runtime DLL was found in $crtDirectory."
+}
+foreach ($required in @("vcruntime140.dll", "msvcp140.dll")) {
+    if ($crtStaged -notcontains $required) {
+        throw "The $Platform CRT runtime is incomplete: $required was not staged from $crtDirectory."
+    }
+}
 
 foreach ($project in @("OpenCppCoverage", "CppCoverage", "Exporter", "FileFilter", "Plugin", "Tools")) {
     $pdb = Join-Path $buildDirectory "$project.pdb"
@@ -180,6 +221,14 @@ $dependencies |
     Sort-Object Name |
     ConvertTo-Json |
     Set-Content -Path $dependencyManifestPath -Encoding utf8
+
+$crtManifestPath = Join-Path $stageRoot "crt-manifest.json"
+[pscustomobject]@{
+    Source       = $crtDirectory
+    Architecture = $Platform
+    Staged       = @($crtStaged | Sort-Object)
+    NotStaged    = @($crtRejected | Sort-Object Name)
+} | ConvertTo-Json -Depth 4 | Set-Content -Path $crtManifestPath -Encoding utf8
 
 $stageScan = Assert-PeArchitecture -Path $stageRoot -ExpectedArchitecture $Platform
 $stageScan |
@@ -249,4 +298,6 @@ $checksumPath = "$zipPath.sha256"
     FileCount = $manifest.Count
     DependencyCount = $dependencies.Count
     CrtSource = $crtDirectory
-} | ConvertTo-Json
+    CrtStaged = @($crtStaged | Sort-Object)
+    CrtNotStaged = @($crtRejected | Sort-Object Name)
+} | ConvertTo-Json -Depth 4
