@@ -20,6 +20,8 @@ jobs:
             package_platform: x86
             triplet: x86-windows
             artifact: windows-x86
+            tool_architecture: x64
+            expected_host: HostX64
           - name: Windows x64 compatibility
             runner: windows-2022
             platform: x64
@@ -27,6 +29,8 @@ jobs:
             package_platform: x64
             triplet: x64-windows
             artifact: windows-x64
+            tool_architecture: x64
+            expected_host: HostX64
           - name: Native Windows ARM64
             runner: windows-11-arm
             platform: ARM64
@@ -34,6 +38,8 @@ jobs:
             package_platform: ARM64
             triplet: arm64-windows
             artifact: windows-arm64
+            tool_architecture: arm64
+            expected_host: Hostarm64
 
     steps:
       - name: Checkout
@@ -94,8 +100,22 @@ jobs:
         shell: pwsh
         run: |
           msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
+            /p:PreferredToolArchitecture=${{ matrix.tool_architecture }} `
             /bl:artifacts\logs\build-Debug-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Debug-${{ matrix.platform }}.log;verbosity=normal"
+
+      # MSBuild chooses its host toolchain independently of what the preflight
+      # probed. On the ARM64 runner it silently used the emulated HostX86
+      # compiler while vcpkg had used Hostarm64, so the shipped binaries were
+      # not built by the toolchain that was verified.
+      - name: Verify build host toolchain (Debug)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-BuildToolchain.ps1 `
+            -BuildLog artifacts\logs\build-Debug-${{ matrix.platform }}.log `
+            -ExpectedHost ${{ matrix.expected_host }} `
+            -SummaryPath artifacts\logs\build-toolchain-Debug-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run tests (Debug)
         shell: pwsh
@@ -108,8 +128,18 @@ jobs:
         shell: pwsh
         run: |
           msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+            /p:PreferredToolArchitecture=${{ matrix.tool_architecture }} `
             /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Release-${{ matrix.platform }}.log;verbosity=normal"
+
+      - name: Verify build host toolchain (Release)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-BuildToolchain.ps1 `
+            -BuildLog artifacts\logs\build-Release-${{ matrix.platform }}.log `
+            -ExpectedHost ${{ matrix.expected_host }} `
+            -SummaryPath artifacts\logs\build-toolchain-Release-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run tests (Release)
         shell: pwsh

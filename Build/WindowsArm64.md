@@ -120,6 +120,36 @@ exclusion carries a written justification in `RunTests.ps1` and is copied into
 `environment-<Platform>-<Configuration>.txt` and the test summary, so a skipped
 test is always visible in the evidence.
 
+## The build host toolchain must be pinned, not assumed
+
+The toolchain preflight records which `cl.exe` *resolves*, but MSBuild selects
+its host toolchain independently. On the ARM64 runner, MSBuild 2022 runs as a
+32-bit process, so it defaulted to the emulated `bin\HostX86\arm64` compiler even
+though `bin\Hostarm64\arm64` was present and was what vcpkg had used to configure
+the dependencies. The build succeeded, but it was not produced by the toolchain
+that had been verified, and nothing in the evidence said so.
+
+Two things now prevent that:
+
+- Each job passes `/p:PreferredToolArchitecture` (`arm64` on the ARM64 runner,
+  `x64` on the x64 runners).
+- `Assert-BuildToolchain.ps1` parses the actual `cl.exe` and `link.exe` command
+  lines out of the build log after every build and fails when any of them comes
+  from an unexpected host directory, when the toolset version is not consistent
+  across invocations, or when no invocation is found at all.
+
+This matters beyond tidiness. MSVC decodes a source file that has no BOM using
+the ambient code page, so anything that changes which compiler process runs, or
+the code page it runs under, can change how non-ASCII sources are interpreted.
+Pinning the host removes that variable instead of relying on it.
+
+Note that `/utf-8` is deliberately **not** used. Five source files
+(`CodeCoverageRunnerTest.cpp`, `CoberturaExporterTest.cpp`,
+`CoverageDataSerializerTest.cpp`, `TestCoverageConsole.cpp`, `ToolTest.cpp`) are
+genuine upstream Windows-1252, carrying bytes `e9 e0 e8`. Forcing UTF-8
+interpretation would corrupt exactly the special-character fixtures the tests
+rely on.
+
 ## How a green run is guaranteed to be real
 
 A previous CI run reported success while `CppCoverageTest` had exited 1 with
