@@ -214,24 +214,63 @@ if (-not $vcpkgRoot) {
 }
 $detectRoot = Join-Path $vcpkgRoot "buildtrees\detect_compiler"
 if (Test-Path -LiteralPath $detectRoot) {
-    $detectLog = Get-ChildItem -Path $detectRoot -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if ($detectLog) {
-        $vcpkgCompilerSource = $detectLog.FullName
+    $triplet = switch ($Platform) {
+        "Win32" { "x86-windows" }
+        "x64"   { "x64-windows" }
+        "ARM64" { "arm64-windows" }
+    }
+
+    # vcpkg leaves several logs here and their names vary between versions and
+    # runners: stdout-<triplet>.log carries #COMPILER_CXX_PATH#, while some
+    # runs only produce config-<triplet>-*-CMakeCache.txt.log. Picking the most
+    # recent file alone is unreliable, so every candidate is inspected and the
+    # ones for this triplet are preferred.
+    $candidates = @(
+        Get-ChildItem -Path $detectRoot -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
+            Sort-Object @{Expression = { $_.Name -like "*$triplet*" }; Descending = $true},
+                        @{Expression = { $_.Name -like "stdout-*" }; Descending = $true},
+                        @{Expression = { $_.LastWriteTime }; Descending = $true}
+    )
+
+    foreach ($detectLog in $candidates) {
         $detectContent = Get-Content -LiteralPath $detectLog.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $detectContent) { continue }
+
+        $path = $null
+        $banner = $null
+
         # vcpkg records the exact compiler it probed, using forward slashes.
         if ($detectContent -match '#COMPILER_CXX_PATH#(.+)') {
-            $vcpkgCompilerPath = $Matches[1].Trim()
+            $path = $Matches[1].Trim()
         }
+        elseif ($detectContent -match 'CMAKE_CXX_COMPILER:[A-Z]+=(.+)') {
+            # CMakeCache dump produced by the configure step.
+            $path = $Matches[1].Trim()
+        }
+
         if ($detectContent -match '#COMPILER_CXX_VERSION#([0-9][0-9.]*)') {
-            $vcpkgCompilerBannerVersion = $Matches[1].Trim()
+            $banner = $Matches[1].Trim()
         }
         elseif ($detectContent -match 'CXX compiler identification is MSVC ([0-9][0-9.]*)') {
-            $vcpkgCompilerBannerVersion = $Matches[1].Trim()
+            $banner = $Matches[1].Trim()
         }
-        if ($vcpkgCompilerPath -match 'MSVC[\\/]([0-9][^\\/]*)[\\/]bin') {
-            $vcpkgCompilerVersion = $Matches[1]
+        elseif ($detectContent -match 'CMAKE_CXX_COMPILER_VERSION:[A-Z]+=([0-9][0-9.]*)') {
+            $banner = $Matches[1].Trim()
+        }
+
+        if ($path) {
+            $vcpkgCompilerSource = $detectLog.FullName
+            $vcpkgCompilerPath = $path
+            $vcpkgCompilerBannerVersion = $banner
+            if ($path -match 'MSVC[\\/]([0-9][^\\/]*)[\\/]bin') {
+                $vcpkgCompilerVersion = $Matches[1]
+            }
+            break
+        }
+
+        if ($banner -and -not $vcpkgCompilerBannerVersion) {
+            $vcpkgCompilerSource = $detectLog.FullName
+            $vcpkgCompilerBannerVersion = $banner
         }
     }
 }
