@@ -18,6 +18,17 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Resolve native ARM64 MSBuild
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\ResolveMSBuild.ps1 `
+            -HostArchitecture arm64 `
+            -Project Tools\Tools.vcxproj `
+            -Configuration Debug `
+            -Platform ARM64 `
+            -SummaryPath artifacts\logs\msbuild-host-ARM64.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify native architecture and test accounting
         shell: pwsh
         run: |
@@ -64,14 +75,22 @@ jobs:
             -RequiredWindowsSdkVersion 10.0.26100.0 `
             -PreferredToolArchitecture arm64 `
             -LogPath artifacts\logs\toolchain-Debug-ARM64.log
-          $msbuild = (Get-Command msbuild.exe).Source
-          & $msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=ARM64 `
+          & "$env:MSBUILD_EXE" /m CppCoverage.sln /p:Configuration=Debug /p:Platform=ARM64 `
             /p:PlatformToolset=v143 `
             /p:PreferredToolArchitecture=arm64 `
             /p:VCToolsVersion=14.44.35207 `
             /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Debug-ARM64.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Debug-ARM64.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify build host toolchain (Debug)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-BuildToolchain.ps1 `
+            -BuildLog artifacts\logs\build-Debug-ARM64.log `
+            -ExpectedHost Hostarm64 `
+            -SummaryPath artifacts\logs\build-toolchain-Debug-ARM64.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Debug tests
@@ -94,8 +113,7 @@ jobs:
             -RequiredWindowsSdkVersion 10.0.26100.0 `
             -PreferredToolArchitecture arm64 `
             -LogPath artifacts\logs\toolchain-Release-ARM64.log
-          $msbuild = (Get-Command msbuild.exe).Source
-          & $msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=ARM64 `
+          & "$env:MSBUILD_EXE" /m CppCoverage.sln /p:Configuration=Release /p:Platform=ARM64 `
             /p:PlatformToolset=v143 `
             /p:PreferredToolArchitecture=arm64 `
             /p:VCToolsVersion=14.44.35207 `
@@ -103,6 +121,27 @@ jobs:
             /bl:artifacts\logs\build-Release-ARM64.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Release-ARM64.log;verbosity=normal"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify build host toolchain (Release)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-BuildToolchain.ps1 `
+            -BuildLog artifacts\logs\build-Release-ARM64.log `
+            -ExpectedHost Hostarm64 `
+            -SummaryPath artifacts\logs\build-toolchain-Release-ARM64.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run Release tests
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ARM64 `
+            -Configuration Release -LogDirectory artifacts\logs
+
+      - name: Run Release end-to-end coverage oracle
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Run-E2ECoverage.ps1 -Platform ARM64 `
+            -Configuration Release -LogDirectory artifacts\logs -Label release
 
       - name: Package, re-expand, scan, and checksum
         shell: pwsh
@@ -123,6 +162,16 @@ jobs:
           }
           "Verified package checksum: $actual" |
             Tee-Object artifacts\logs\checksum-ARM64.txt
+
+      - name: Run packaged end-to-end coverage oracle
+        shell: pwsh
+        run: |
+          $packageRoot = Get-ChildItem artifacts\expanded -Directory -ErrorAction Stop |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $packageRoot) { throw "No re-expanded package was found." }
+          & .\Build\Scripts\Run-E2ECoverage.ps1 -Platform ARM64 `
+            -Configuration Release -LogDirectory artifacts\logs `
+            -PackageRoot $packageRoot -Label packaged
 
       - name: Upload logs
         if: always()

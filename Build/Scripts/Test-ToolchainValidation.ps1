@@ -71,4 +71,51 @@ try {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+$assertScript = Join-Path $PSScriptRoot "Assert-BuildToolchain.ps1"
+$logRoot = Join-Path $PSScriptRoot "..\..\artifacts\script-tests\build-toolchain"
+New-Item -ItemType Directory -Force $logRoot | Out-Null
+try {
+    function Assert-BuildLogResult {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Name,
+
+            [Parameter(Mandatory)]
+            [string[]]$Lines,
+
+            [Parameter(Mandatory)]
+            [int]$ExpectedExitCode
+        )
+
+        $logPath = Join-Path $logRoot "$Name.log"
+        Set-Content -LiteralPath $logPath -Value $Lines
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & pwsh -NoProfile -File $assertScript `
+            -BuildLog $logPath -ExpectedHost Hostarm64 *> $null
+        $actualExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousErrorAction
+        if ($actualExitCode -ne $ExpectedExitCode) {
+            throw "Build-toolchain case '$Name' exited $actualExitCode; expected $ExpectedExitCode."
+        }
+    }
+
+    $nativeCl =
+        "C:\VS\VC\Tools\MSVC\14.44.35207\bin\Hostarm64\arm64\cl.exe /c fixture.cpp"
+    $nativeLink =
+        "C:\VS\VC\Tools\MSVC\14.44.35207\bin\Hostarm64\arm64\link.exe fixture.obj"
+    Assert-BuildLogResult native @($nativeCl, $nativeLink) 0
+    Assert-BuildLogResult wrong-host @(
+        "C:\VS\VC\Tools\MSVC\14.44.35207\bin\HostX86\arm64\cl.exe /c fixture.cpp",
+        $nativeLink
+    ) 1
+    Assert-BuildLogResult empty @("Build succeeded without command lines.") 1
+    Assert-BuildLogResult mixed-version @(
+        $nativeCl,
+        "C:\VS\VC\Tools\MSVC\14.45.00000\bin\Hostarm64\arm64\link.exe fixture.obj"
+    ) 1
+} finally {
+    Remove-Item -LiteralPath $logRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Output "All toolchain validation regression cases passed."

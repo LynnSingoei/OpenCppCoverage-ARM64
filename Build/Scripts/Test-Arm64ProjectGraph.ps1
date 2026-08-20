@@ -74,8 +74,13 @@ if ($directoryTargets -notmatch
 $arm64Workflow = Get-Content -LiteralPath (
     Join-Path $repositoryRoot ".github\workflows\arm64-compat.yml") -Raw
 if ($arm64Workflow -notmatch '(?m)/p:PreferredToolArchitecture=arm64\s*`' -or
-    $arm64Workflow -notmatch '(?m)-PreferredToolArchitecture arm64\s*`') {
-    throw "The native ARM64 workflow does not pin PreferredToolArchitecture=arm64."
+    $arm64Workflow -notmatch '(?m)-PreferredToolArchitecture arm64\s*`' -or
+    $arm64Workflow -notmatch '(?m)-HostArchitecture arm64\s*`' -or
+    $arm64Workflow -notmatch '(?m)& "\$env:MSBUILD_EXE" /m CppCoverage\.sln' -or
+    $arm64Workflow -notmatch '(?m)-ExpectedHost Hostarm64\s*`' -or
+    $arm64Workflow -notmatch '(?m)-Configuration Release -LogDirectory artifacts\\logs' -or
+    $arm64Workflow -notmatch '(?m)-PackageRoot \$packageRoot -Label packaged') {
+    throw "The native ARM64 workflow does not select and verify the native ARM64 MSBuild host."
 }
 
 Write-Output "ARM64 graph includes all $($requiredProjects.Count) required projects in Debug and Release."

@@ -13,7 +13,7 @@
     <Error Condition="'$(PreferredToolArchitecture)' != 'arm64'"
            Text="ARM64 requires PreferredToolArchitecture=arm64, but resolved '$(PreferredToolArchitecture)'." />
     <Message Importance="High"
-             Text="ARM64 toolchain: PlatformToolset=$(PlatformToolset); PreferredToolArchitecture=$(PreferredToolArchitecture); VCToolsVersion=$(VCToolsVersion); VCToolsInstallDir=$(VCToolsInstallDir); WindowsSDKVersion=$(WindowsSDKVersion); WindowsSdkDir=$(WindowsSdkDir); CLToolPath=$(CLToolPath); LinkToolPath=$(LinkToolPath)" />
+             Text="ARM64 toolchain: PROCESSOR_ARCHITECTURE=$(PROCESSOR_ARCHITECTURE); PreferredToolArchitecture=$(PreferredToolArchitecture); PlatformToolset=$(PlatformToolset); VCToolsVersion=$(VCToolsVersion); VCToolsInstallDir=$(VCToolsInstallDir); WindowsSDKVersion=$(WindowsSDKVersion); WindowsSdkDir=$(WindowsSdkDir); CLToolPath=$(CLToolPath); LinkToolPath=$(LinkToolPath)" />
   </Target>
   <Import Project="$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets"
           Condition="Exists('$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets')" />

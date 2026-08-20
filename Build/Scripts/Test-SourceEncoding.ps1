@@ -100,9 +100,47 @@ try {
 
     # The repository itself must satisfy the gate.
     $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-    Assert-SourceEncoding `
-        -Root $repositoryRoot `
-        -Files (Get-TrackedSourceFiles -Root $repositoryRoot)
+    $trackedFiles = Get-TrackedSourceFiles -Root $repositoryRoot
+    Assert-SourceEncoding -Root $repositoryRoot -Files $trackedFiles
+
+    $expectedNonAscii = [ordered]@{
+        "CppCoverageTest/CodeCoverageRunnerTest.cpp"  = "utf8-bom"
+        "ExporterTest/CoberturaExporterTest.cpp"      = "ansi"
+        "ExporterTest/CoverageDataSerializerTest.cpp" = "ansi"
+        "TestCoverageConsole/TestCoverageConsole.cpp" = "ansi"
+        "TestCppCli/UnitTest.cpp"                     = "utf8-bom"
+        "ToolsTest/ToolTest.cpp"                      = "ansi"
+    }
+
+    $actualNonAscii = [ordered]@{}
+    foreach ($file in $trackedFiles) {
+        $bytes = [System.IO.File]::ReadAllBytes((Join-Path $repositoryRoot $file))
+        $kind = Get-SourceEncodingKind -Bytes $bytes
+        if ($kind -ne "ascii") {
+            $actualNonAscii[$file] = $kind
+        }
+    }
+
+    $inventoryFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($file in $expectedNonAscii.Keys) {
+        if (-not $actualNonAscii.Contains($file)) {
+            $inventoryFailures.Add("$file : expected a non-ASCII source, but it is now pure ASCII.")
+        } elseif ($actualNonAscii[$file] -ne $expectedNonAscii[$file]) {
+            $inventoryFailures.Add(
+                "$file : encoding changed from $($expectedNonAscii[$file]) to $($actualNonAscii[$file]).")
+        }
+    }
+    foreach ($file in $actualNonAscii.Keys) {
+        if (-not $expectedNonAscii.Contains($file)) {
+            $inventoryFailures.Add(
+                "$file : new non-ASCII source ($($actualNonAscii[$file])) is not in the reviewed inventory.")
+        }
+    }
+    if ($inventoryFailures.Count -gt 0) {
+        throw "Non-ASCII source inventory changed:`n - $($inventoryFailures -join "`n - ")"
+    }
+
+    Write-Output "Non-ASCII source inventory matches $($expectedNonAscii.Count) reviewed files."
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

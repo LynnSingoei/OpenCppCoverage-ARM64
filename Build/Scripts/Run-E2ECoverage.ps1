@@ -5,7 +5,11 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",
 
-    [string]$LogDirectory = (Join-Path $PSScriptRoot "..\..\artifacts\test-logs")
+    [string]$LogDirectory = (Join-Path $PSScriptRoot "..\..\artifacts\test-logs"),
+
+    [string]$PackageRoot,
+
+    [string]$Label = "build"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +21,11 @@ $outputDirectory = @{
     x64 = (Join-Path $repositoryRoot "x64\$Configuration")
     ARM64 = (Join-Path $repositoryRoot "ARM64\$Configuration")
 }[$Platform]
-$openCppCoverage = Join-Path $outputDirectory "OpenCppCoverage.exe"
+$openCppCoverage = if ($PackageRoot) {
+    Join-Path $PackageRoot "Binaries\OpenCppCoverage.exe"
+} else {
+    Join-Path $outputDirectory "OpenCppCoverage.exe"
+}
 $testProgram = Join-Path $outputDirectory "TestCoverageConsole.exe"
 $source = Join-Path $repositoryRoot "TestCoverageConsole\TestThread.cpp"
 foreach ($requiredFile in @($openCppCoverage, $testProgram, $source)) {
@@ -27,8 +35,8 @@ foreach ($requiredFile in @($openCppCoverage, $testProgram, $source)) {
 }
 
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
-$coverageXml = Join-Path $LogDirectory "e2e-cobertura-$Platform-$Configuration.xml"
-$logPath = Join-Path $LogDirectory "e2e-coverage-$Platform-$Configuration.log"
+$coverageXml = Join-Path $LogDirectory "e2e-cobertura-$Label-$Platform-$Configuration.xml"
+$logPath = Join-Path $LogDirectory "e2e-coverage-$Label-$Platform-$Configuration.log"
 Remove-Item -LiteralPath $coverageXml -Force -ErrorAction SilentlyContinue
 
 & $openCppCoverage `
@@ -86,4 +94,4 @@ foreach ($line in $unexecutedLines) {
     }
 }
 
-Write-Output "E2E Cobertura oracle passed: covered=$($requiredLines -join ',') uncovered=$($unexecutedLines -join ',')."
+Write-Output "E2E Cobertura oracle passed for ${Label}: covered=$($requiredLines -join ',') uncovered=$($unexecutedLines -join ',')."

@@ -168,6 +168,7 @@ jobs:
             /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Release-${{ matrix.platform }}.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify build host toolchain (Release)
         shell: pwsh
@@ -177,6 +178,18 @@ jobs:
             -ExpectedHost ${{ matrix.expected_host }} `
             -SummaryPath artifacts\logs\build-toolchain-Release-${{ matrix.platform }}.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run tests (Release)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
+           -Configuration Release -LogDirectory artifacts\logs
+
+      - name: Run Release end-to-end coverage oracle
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Run-E2ECoverage.ps1 -Platform ${{ matrix.test_platform }} `
+           -Configuration Release -LogDirectory artifacts\logs -Label release
 
       - name: Package and verify
         shell: pwsh
@@ -195,6 +208,16 @@ jobs:
           if ($actual -ne $expected) {
             throw "Package checksum mismatch for $zip."
           }
+
+      - name: Run packaged end-to-end coverage oracle
+        shell: pwsh
+        run: |
+          $packageRoot = Get-ChildItem artifacts\expanded -Directory -ErrorAction Stop |
+           Select-Object -First 1 -ExpandProperty FullName
+          if (-not $packageRoot) { throw "No re-expanded package was found." }
+          & .\Build\Scripts\Run-E2ECoverage.ps1 -Platform ${{ matrix.test_platform }} `
+           -Configuration Release -LogDirectory artifacts\logs `
+           -PackageRoot $packageRoot -Label packaged
 
       - name: Upload logs
         if: always()
