@@ -1,0 +1,172 @@
+name: WinPort independent asset verification
+
+# Authored by the WinPort integration session, not by the porting session.
+# It never builds the product. It downloads the already-published release asset,
+# proves the bytes match the recorded checksum, proves every shipped image is
+# ARM64, and then executes the shipped OpenCppCoverage.exe against a fixture
+# compiled on the runner. That last step is the only thing that can show the
+# packaged binaries actually run on native Windows ARM64 hardware.
+
+on:
+  push:
+    branches:
+      - winport/independent-verification
+  workflow_dispatch:
+    inputs:
+      asset_url:
+        description: Published release asset to verify
+        required: true
+        default: https://github.com/LynnSingoei/OpenCppCoverage-ARM64/releases/download/arm64-81376ba/OpenCppCoverage-0.9.9.0-windows-arm64.zip
+      expected_sha256:
+        description: Expected SHA-256 of the asset
+        required: true
+        default: 83f0e1c19d89c534a13a67eef4ebdacb85593aa4696d06ca4925ac03ecfee7a5
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify published ARM64 asset on native hardware
+    runs-on: windows-11-arm
+    env:
+      ASSET_URL: ${{ github.event.inputs.asset_url || 'https://github.com/LynnSingoei/OpenCppCoverage-ARM64/releases/download/arm64-81376ba/OpenCppCoverage-0.9.9.0-windows-arm64.zip' }}
+      EXPECTED_SHA256: ${{ github.event.inputs.expected_sha256 || '83f0e1c19d89c534a13a67eef4ebdacb85593aa4696d06ca4925ac03ecfee7a5' }}
+
+    steps:
+      - name: Assert native ARM64 runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = (Get-CimInstance Win32_OperatingSystem).OSArchitecture
+          $proc = $env:PROCESSOR_ARCHITECTURE
+          $dotnet = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          "OSArchitecture=$os"
+          "PROCESSOR_ARCHITECTURE=$proc"
+          "RuntimeInformation.OSArchitecture=$dotnet"
+          if ("$dotnet" -ne 'Arm64') { throw "Not a native ARM64 runner: $dotnet" }
+
+      - name: Download published asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Invoke-WebRequest -Uri $env:ASSET_URL -OutFile artifact/package.zip
+          $len = (Get-Item artifact/package.zip).Length
+          "Downloaded $($env:ASSET_URL) ($len bytes)"
+
+      - name: Verify checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (Get-FileHash artifact/package.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = $env:EXPECTED_SHA256.ToLowerInvariant()
+          "expected=$expected"
+          "actual  =$actual"
+          if ($actual -ne $expected) { throw 'Checksum mismatch: refusing to verify unrelated bytes.' }
+          'Checksum verified.'
+
+      - name: Expand and inventory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive artifact/package.zip -DestinationPath expanded -Force
+          $files = Get-ChildItem expanded -Recurse -File
+          "Files: $($files.Count)"
+          $exporter = Join-Path 'expanded' 'Binaries/Plugins/Exporter'
+          if (-not (Test-Path $exporter)) { throw 'Binaries\Plugins\Exporter is missing; the product cannot start.' }
+          "Plugins\Exporter present with $((Get-ChildItem $exporter -Force -Recurse -File).Count) file(s)"
+          $manifest = Get-ChildItem expanded -Recurse -Filter crt-manifest.json | Select-Object -First 1
+          if ($manifest) { "crt-manifest.json:"; Get-Content $manifest.FullName -Raw }
+
+      - name: Scan every shipped image for PE machine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bad = @()
+          $count = 0
+          foreach ($f in Get-ChildItem expanded -Recurse -File -Include *.exe, *.dll) {
+            $fs = [System.IO.File]::OpenRead($f.FullName)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              $fs.Position = 0x3C
+              $peOffset = $br.ReadInt32()
+              $fs.Position = $peOffset
+              $sig = $br.ReadUInt32()
+              if ($sig -ne 0x00004550) { $bad += "$($f.Name): not a PE"; continue }
+              $machine = $br.ReadUInt16()
+              $count++
+              '{0,-40} 0x{1:X4}' -f $f.Name, $machine
+              if ($machine -ne 0xAA64) { $bad += ('{0}: 0x{1:X4}' -f $f.Name, $machine) }
+            } finally { $fs.Dispose() }
+          }
+          "Scanned $count image(s)"
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { "VIOLATION $_" }; throw "Non-ARM64 images in the published package: $($bad.Count)" }
+          'Every shipped image is ARM64 (0xAA64).'
+
+      - name: Compile a coverage fixture with the native toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path fixture | Out-Null
+          $src = @(
+            '// WinPort independent runtime fixture',
+            'int hot(int x) { return x * 2; }',
+            'int cold(int x) { return x + 7; }',
+            'int main() {',
+            '    volatile int r = hot(21);',
+            '    return r == 42 ? 0 : 1;',
+            '}'
+          )
+          Set-Content -Path fixture/fixture.cpp -Value $src -Encoding ascii
+          Get-Content fixture/fixture.cpp | ForEach-Object -Begin { $i = 0 } -Process { $i++; "{0,3}: {1}" -f $i, $_ }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -prerelease -products * -property installationPath
+          if (-not $install) { throw 'No Visual Studio installation found.' }
+          "VS: $install"
+          $vcvars = Join-Path $install 'VC\Auxiliary\Build\vcvarsall.bat'
+          cmd /c "call `"$vcvars`" arm64 >nul && cd fixture && cl /nologo /Zi /Od /EHsc fixture.cpp /Fe:fixture.exe"
+          if ($LASTEXITCODE -ne 0) { throw "cl failed with $LASTEXITCODE" }
+          Get-ChildItem fixture | Select-Object Name, Length
+
+      - name: Run the shipped OpenCppCoverage against the fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'expanded/Binaries/OpenCppCoverage.exe'
+          $sources = (Resolve-Path 'fixture').Path
+          $target = (Resolve-Path 'fixture/fixture.exe').Path
+          "OpenCppCoverage: $exe"
+          & $exe --sources $sources --export_type "cobertura:coverage.xml" --working_dir $sources -- $target
+          $code = $LASTEXITCODE
+          "CoverageExitCode=$code"
+          if ($code -ne 0) { throw "The shipped OpenCppCoverage.exe exited $code" }
+          if (-not (Test-Path coverage.xml)) { throw 'No cobertura report was produced.' }
+
+      - name: Assert the coverage result is correct
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$report = Get-Content coverage.xml -Raw
+          $lines = $report.SelectNodes('//line')
+          if (-not $lines -or $lines.Count -eq 0) { throw 'The report contains no line records.' }
+          foreach ($l in $lines) { "line {0,3} hits={1}" -f $l.number, $l.hits }
+
+          $hot = $lines | Where-Object { [int]$_.number -eq 2 } | Select-Object -First 1
+          $cold = $lines | Where-Object { [int]$_.number -eq 3 } | Select-Object -First 1
+          if (-not $hot) { throw 'Line 2 (executed) is absent from the report.' }
+          if (-not $cold) { throw 'Line 3 (unreachable) is absent from the report.' }
+          if ([int]$hot.hits -lt 1) { throw "Line 2 should be covered but reports $($hot.hits) hits." }
+          if ([int]$cold.hits -ne 0) { throw "Line 3 is never called but reports $($cold.hits) hits." }
+          'Coverage is correct: the executed line is hit and the unreachable line is not.'
+          "ProcessArchitecture=$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+
+      - name: Publish evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winport-independent-verification
+          path: |
+            coverage.xml
+            fixture/fixture.cpp
