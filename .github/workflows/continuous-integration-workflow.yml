@@ -57,6 +57,18 @@ jobs:
             throw "The ARM64 job is not running on a native ARM64 operating system."
           }
 
+      - name: Verify project toolsets
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Test-ProjectToolsets.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify the test pipeline is fail-closed
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Test-FailClosed.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Cache installed dependencies
         uses: actions/cache@v4
         with:
@@ -70,6 +82,14 @@ jobs:
             Tee-Object artifacts\logs\restore-${{ matrix.platform }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Toolchain preflight
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\ToolchainPreflight.ps1 -Platform ${{ matrix.platform }} `
+            -Configuration Debug -LogDirectory artifacts\logs -RequireVcpkgComparison 2>&1 |
+            Tee-Object artifacts\logs\preflight-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build Debug
         shell: pwsh
         run: |
@@ -77,11 +97,12 @@ jobs:
             /bl:artifacts\logs\build-Debug-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Debug-${{ matrix.platform }}.log;verbosity=normal"
 
-      - name: Run tests
+      - name: Run tests (Debug)
         shell: pwsh
         run: |
           & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
             -Configuration Debug -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Release
         shell: pwsh
@@ -90,11 +111,35 @@ jobs:
             /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Release-${{ matrix.platform }}.log;verbosity=normal"
 
+      - name: Run tests (Release)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Release -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: End-to-end coverage assertion
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunEndToEnd.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Release -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Package and verify
         shell: pwsh
         run: |
           & .\CreateRelease.ps1 -Platform ${{ matrix.package_platform }} -Configuration Release 2>&1 |
             Tee-Object artifacts\logs\package-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Final independent gate. Even if a step above were ever made
+      # fail-open, this re-reads the recorded results and fails the job when
+      # any suite did not fully pass, or when an expected report is missing.
+      - name: Verify recorded results
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-Results.ps1 -Platform ${{ matrix.test_platform }} `
+            -LogDirectory artifacts\logs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload logs

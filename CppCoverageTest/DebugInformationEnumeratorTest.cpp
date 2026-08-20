@@ -16,6 +16,7 @@
 
 #include "stdafx.h"
 
+#include <algorithm>
 #include <fstream>
 
 #include "CppCoverage/DebugInformationEnumerator.hpp"
@@ -93,6 +94,22 @@ namespace CppCoverageTest
 		auto lineWithDebugInfo = GetLineNumbersWithTag(
 		    debugInformationHandler.selectedFullPath_, L"@DebugInfoExpected");
 
+		// The MSVC ARM64 compiler emits no line-table entry for a function's
+		// closing brace, whereas the x86 and x64 compilers do. This is a
+		// documented code-generation difference: OpenCppCoverage faithfully
+		// reports the lines present in the PDB, so the closing brace is only
+		// expected on architectures whose compiler records it.
+#ifndef _M_ARM64
+		for (auto closingBraceLine :
+		     GetLineNumbersWithTag(debugInformationHandler.selectedFullPath_,
+		                           L"@DebugInfoClosingBrace"))
+		{
+			lineWithDebugInfo.push_back(closingBraceLine);
+		}
+		std::sort(lineWithDebugInfo.begin(), lineWithDebugInfo.end());
+#endif
+
+		ASSERT_FALSE(lineWithDebugInfo.empty());
 		ASSERT_EQ(debugInformationHandler.lines_, lineWithDebugInfo);
 	}
 }

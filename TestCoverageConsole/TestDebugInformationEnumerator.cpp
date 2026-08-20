@@ -27,5 +27,5 @@ namespace TestCoverageConsole
 		{
 			int answer = 42; // @DebugInfoExpected
 		}
-	} // @DebugInfoExpected
+	} // @DebugInfoClosingBrace
 }
