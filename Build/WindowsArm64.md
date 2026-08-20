@@ -104,6 +104,22 @@ target is native `IMAGE_FILE_MACHINE_ARM64`. `PeArchitecture.ps1` recognises the
 ARM64EC and ARM64X machine values so that such an image is reported explicitly
 rather than being mistaken for a native ARM64 binary.
 
+## Why the ARM64 suite count differs
+
+`CppCoverageTest` executes 116 tests on both x64 and ARM64, but they are not the
+same 116. Comparing the `[ RUN ]` lines of the two runs:
+
+| Test | x64 | ARM64 |
+| --- | --- | --- |
+| `CppCliTest.ManagedUnManagedModule` | runs | excluded - MSVC has no `/clr` for ARM64 |
+| `BreakPointTest.RejectsUnalignedArm64Address` | not compiled | runs - ARM64 `BRK` must be 4-byte aligned |
+
+Win32 executes 115 because it excludes `CppCliTest.ManagedUnManagedModule` (the
+C++/CLI fixture is built for x64 only) without gaining an ARM64-only test. Every
+exclusion carries a written justification in `RunTests.ps1` and is copied into
+`environment-<Platform>-<Configuration>.txt` and the test summary, so a skipped
+test is always visible in the evidence.
+
 ## How a green run is guaranteed to be real
 
 A previous CI run reported success while `CppCoverageTest` had exited 1 with
