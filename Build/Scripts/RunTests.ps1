@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$PSNativeCommandUseErrorActionPreference = $false
 $repositoryRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 . (Join-Path $PSScriptRoot "PeArchitecture.ps1")
 . (Join-Path $PSScriptRoot "TestResults.ps1")

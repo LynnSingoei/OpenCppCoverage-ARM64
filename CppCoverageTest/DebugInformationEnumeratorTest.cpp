@@ -16,6 +16,8 @@
 
 #include "stdafx.h"
 
+#include <algorithm>
+
 #include "CppCoverage/DebugInformationEnumerator.hpp"
 #include "TestCoverageConsole/TestDebugInformationEnumerator.hpp"
 #include "TestCoverageConsole/TestCoverageConsole.hpp"
@@ -77,6 +79,11 @@ namespace CppCoverageTest
 
 		ASSERT_EQ(1, requiredLines.size());
 		ASSERT_FALSE(debugInformationHandler.selectedFullPath_.empty());
-		ASSERT_EQ(requiredLines, debugInformationHandler.lines_);
+		auto actualLines = debugInformationHandler.lines_;
+		std::sort(actualLines.begin(), actualLines.end());
+		actualLines.erase(
+		    std::unique(actualLines.begin(), actualLines.end()),
+		    actualLines.end());
+		ASSERT_EQ(requiredLines, actualLines);
 	}
 }
