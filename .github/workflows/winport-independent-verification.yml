@@ -250,11 +250,21 @@ jobs:
           "NativeErrorCode=$native"
           "Message=$message"
 
+          # Windows has two distinct refusals for an image whose machine type the
+          # host cannot execute, and which one you get depends on the OS version:
+          #   193 ERROR_BAD_EXE_FORMAT           - "not a valid Win32 application"
+          #   216 ERROR_EXE_MACHINE_TYPE_MISMATCH - "not a valid application for this OS platform"
+          # Both are the architecture rejection this control is testing for. Anything
+          # else - a missing file (2), an access denial (5) - means the test never
+          # exercised the architecture at all, so it must still fail rather than be
+          # counted as a pass.
+          $architectureRejections = @(193, 216)
+
           if ($started) {
             throw 'VIOLATION: an ARM64 image started on an x64 runner. The package is not ARM64-only.'
           }
-          if ($native -ne 193) {
-            throw "Expected ERROR_BAD_EXE_FORMAT (193) but got $native. The failure is not the architecture mismatch we are testing for."
+          if ($architectureRejections -notcontains $native) {
+            throw "Expected an architecture rejection ($($architectureRejections -join ' or ')) but got $native. The failure is not the architecture mismatch we are testing for."
           }
-          'Correct: the shipped ARM64 binary is rejected by x64 Windows with ERROR_BAD_EXE_FORMAT (193).'
+          "Correct: x64 Windows refused the shipped ARM64 binary with error $native."
           'This is what proves the positive ARM64 result is architecture-specific and not an x64 fallback.'
