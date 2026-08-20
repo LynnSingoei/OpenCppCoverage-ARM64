@@ -1,37 +1,224 @@
-name: Unit tests
-on: [push, pull_request]
+name: Windows builds and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Unit tests
-    runs-on: windows-latest
+  build-test-package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86 compatibility
+            runner: windows-2022
+            platform: Win32
+            test_platform: x86
+            package_platform: x86
+            triplet: x86-windows
+            artifact: windows-x86
+            tool_architecture: x64
+            expected_host: HostX64
+          - name: Windows x64 compatibility
+            runner: windows-2022
+            platform: x64
+            test_platform: x64
+            package_platform: x64
+            triplet: x64-windows
+            artifact: windows-x64
+            tool_architecture: x64
+            expected_host: HostX64
+          - name: Native Windows ARM64
+            runner: windows-11-arm
+            platform: ARM64
+            test_platform: ARM64
+            package_platform: ARM64
+            triplet: arm64-windows
+            artifact: windows-arm64
+            tool_architecture: arm64
+            expected_host: Hostarm64
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
-
-      - name: Install third party libraries
-        run: ./InstallThirdPartyLibraries.ps1
+        uses: actions/checkout@v4
 
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v1.0.0
+        uses: microsoft/setup-msbuild@v2
 
-      - name: Build solution
-        run: msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=x64
+      # setup-msbuild puts the 32-bit MSBuild on PATH. On the ARM64 runner that
+      # host silently selects the emulated bin\HostX86\arm64 compiler, and
+      # /p:PreferredToolArchitecture alone did not override it. Resolve the
+      # MSBuild that matches the host we intend to build with, and prove which
+      # tool architecture it evaluates before compiling anything.
+      - name: Resolve native MSBuild
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\ResolveMSBuild.ps1 `
+            -HostArchitecture ${{ matrix.tool_architecture }} `
+            -Project Tools\Tools.vcxproj `
+            -Configuration Debug `
+            -Platform ${{ matrix.platform }} `
+            -SummaryPath artifacts\logs\msbuild-host-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run CppCoverageTest
-        run: .\x64\Debug\CppCoverageTest.exe --gtest_filter=-CodeCoverageRunnerTest.OptimizedBuild # Require VS2013
+      - name: Record runner architecture
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\logs | Out-Null
+          @(
+            "OS=$([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+            "OSArchitecture=$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+            "ProcessArchitecture=$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+            "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          ) | Tee-Object artifacts\logs\environment-${{ matrix.platform }}.txt
+          if ("${{ matrix.platform }}" -eq "ARM64" -and
+              [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne "Arm64") {
+            throw "The ARM64 job is not running on a native ARM64 operating system."
+          }
 
-      - name: Run ExporterTest
-        run: .\x64\Debug\ExporterTest.exe
+      - name: Verify project toolsets
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Test-ProjectToolsets.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run FileFilterTest
-        run: .\x64\Debug\FileFilterTest.exe --gtest_filter=-RelocationsExtractorTest.Extract # Require mspdbcore.dll
+      - name: Verify the test pipeline is fail-closed
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Test-FailClosed.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run OpenCppCoverageTest
-        run: .\x64\Debug\OpenCppCoverageTest.exe
+      - name: Verify source encoding
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Test-SourceEncoding.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run PluginTest
-        run: .\x64\Debug\PluginTest.exe
+      - name: Cache installed dependencies
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**') }}
 
-      - name: Run ToolsTest
-        run: .\x64\Debug\ToolsTest.exe
+      - name: Restore pinned dependencies
+        shell: pwsh
+        run: |
+          & .\InstallThirdPartyLibraries.ps1 -Triplet ${{ matrix.triplet }} 2>&1 |
+            Tee-Object artifacts\logs\restore-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Toolchain preflight
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\ToolchainPreflight.ps1 -Platform ${{ matrix.platform }} `
+            -Configuration Debug -LogDirectory artifacts\logs -RequireVcpkgComparison 2>&1 |
+            Tee-Object artifacts\logs\preflight-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Debug
+        shell: pwsh
+        run: |
+          & "$env:MSBUILD_EXE" /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
+            /p:PreferredToolArchitecture=${{ matrix.tool_architecture }} `
+            /bl:artifacts\logs\build-Debug-${{ matrix.platform }}.binlog `
+            /fl "/flp:logfile=artifacts\logs\build-Debug-${{ matrix.platform }}.log;verbosity=normal"
+
+      # MSBuild chooses its host toolchain independently of what the preflight
+      # probed. On the ARM64 runner it silently used the emulated HostX86
+      # compiler while vcpkg had used Hostarm64, so the shipped binaries were
+      # not built by the toolchain that was verified.
+      - name: Verify build host toolchain (Debug)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-BuildToolchain.ps1 `
+            -BuildLog artifacts\logs\build-Debug-${{ matrix.platform }}.log `
+            -ExpectedHost ${{ matrix.expected_host }} `
+            -SummaryPath artifacts\logs\build-toolchain-Debug-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run tests (Debug)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Debug -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          & "$env:MSBUILD_EXE" /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+            /p:PreferredToolArchitecture=${{ matrix.tool_architecture }} `
+            /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `
+            /fl "/flp:logfile=artifacts\logs\build-Release-${{ matrix.platform }}.log;verbosity=normal"
+
+      - name: Verify build host toolchain (Release)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-BuildToolchain.ps1 `
+            -BuildLog artifacts\logs\build-Release-${{ matrix.platform }}.log `
+            -ExpectedHost ${{ matrix.expected_host }} `
+            -SummaryPath artifacts\logs\build-toolchain-Release-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run tests (Release)
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Release -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: End-to-end coverage assertion
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunEndToEnd.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Release -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package and verify
+        shell: pwsh
+        run: |
+          & .\CreateRelease.ps1 -Platform ${{ matrix.package_platform }} -Configuration Release 2>&1 |
+            Tee-Object artifacts\logs\package-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Prove the artifact that ships actually works: run the re-expanded
+      # package's own OpenCppCoverage.exe, not the build output. This catches a
+      # payload that passes PE scans but is missing a runtime dependency.
+      - name: End-to-end coverage assertion (packaged)
+        shell: pwsh
+        run: |
+          $packageRoot = Get-ChildItem artifacts\expanded -Directory |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $packageRoot) { throw "No re-expanded package was found." }
+          & .\Build\Scripts\RunEndToEnd.ps1 -Platform ${{ matrix.package_platform }} `
+            -Configuration Release -LogDirectory artifacts\logs `
+            -PackageRoot $packageRoot -Label packaged 2>&1 |
+            Tee-Object artifacts\logs\e2e-packaged-${{ matrix.platform }}.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # fail-open, this re-reads the recorded results and fails the job when
+      # any suite did not fully pass, or when an expected report is missing.
+      - name: Verify recorded results
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Assert-Results.ps1 -Platform ${{ matrix.test_platform }} `
+            -LogDirectory artifacts\logs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.artifact }}
+          path: artifacts/logs
+
+      - name: Upload distributable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenCppCoverage-${{ matrix.artifact }}
+          path: |
+            artifacts/*.zip
+            artifacts/*.sha256
+            artifacts/*-expanded-pe-manifest.json

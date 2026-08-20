@@ -46,7 +46,7 @@ namespace Tools
 		{
 			if (!::ReadProcessMemory(
 			        hProcess,
-			        reinterpret_cast<void*>(address),
+			        reinterpret_cast<void*>(address + totalBytesRead),
 			        &reinterpret_cast<char*>(buffer)[totalBytesRead],
 			        size - totalBytesRead,
 			        &bytesRead))
@@ -63,7 +63,7 @@ namespace Tools
 	//-------------------------------------------------------------------------
 	void WriteProcessMemory(HANDLE hProcess,
 	                        void* address,
-	                        void* buffer,
+	                        const void* buffer,
 	                        size_t size)
 	{
 		SIZE_T totalWritten = 0;
@@ -71,9 +71,12 @@ namespace Tools
 
 		while (totalWritten < size)
 		{
-			auto startBuffer = static_cast<char*>(buffer) + totalWritten;
+			auto startBuffer =
+			    static_cast<const char*>(buffer) + totalWritten;
+			auto startAddress =
+			    static_cast<char*>(address) + totalWritten;
 			if (!::WriteProcessMemory(hProcess,
-			                          address,
+			                          startAddress,
 			                          startBuffer,
 			                          size - totalWritten,
 			                          &written))
@@ -84,7 +87,7 @@ namespace Tools
 			if (written == 0)
 				THROW("Cannot write process memory");
 
-			if (!FlushInstructionCache(hProcess, startBuffer, written))
+			if (!FlushInstructionCache(hProcess, startAddress, written))
 				THROW("Cannot flush memory:");
 			totalWritten += written;
 		}

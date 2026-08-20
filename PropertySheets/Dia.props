@@ -2,12 +2,17 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ImportGroup Label="PropertySheets" />
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <DiaRuntimeDirectory Condition="'$(Platform)' == 'Win32'">$(VsInstallRoot)\DIA SDK\bin</DiaRuntimeDirectory>
+    <DiaRuntimeDirectory Condition="'$(Platform)' == 'x64'">$(VsInstallRoot)\DIA SDK\bin\amd64</DiaRuntimeDirectory>
+    <DiaRuntimeDirectory Condition="'$(Platform)' == 'ARM64'">$(VsInstallRoot)\DIA SDK\bin\arm64</DiaRuntimeDirectory>
+  </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(VsInstallRoot)\DIA SDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <PostBuildEvent>
-      <Command>xcopy /y $(ProjectDir)Dia\$(PlatformTarget)\msdia140.dll $(OutputPath)</Command>
+      <Command>xcopy /y "$(DiaRuntimeDirectory)\msdia140.dll" "$(OutputPath)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
 </Project>

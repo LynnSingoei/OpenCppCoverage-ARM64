@@ -32,7 +32,7 @@
 #include "CoverageDataSerializer.hpp"
 #include "ProtoBuff.hpp"
 
-namespace pb = ProtoBuff;
+namespace coverage_pb = ProtoBuff;
 
 namespace Exporter
 {
@@ -58,14 +58,14 @@ namespace Exporter
 		//---------------------------------------------------------------------
 		void InitCoverageDataFrom(
 			google::protobuf::io::CodedInputStream&  input,
-			const pb::CoverageData& coverageDataProtoBuff,
+			const coverage_pb::CoverageData& coverageDataProtoBuff,
 			Plugin::CoverageData& coverageData)
 		{
 			auto moduleCount = coverageDataProtoBuff.modulecount();
 
 			for (size_t i = 0; i < moduleCount; ++i)
 			{
-				pb::ModuleCoverage moduleProtoBuff;
+				coverage_pb::ModuleCoverage moduleProtoBuff;
 
 				ReadMessage(input, moduleProtoBuff);				
 				auto& module = coverageData.AddModule(Tools::Utf8ToWString(moduleProtoBuff.path()));
@@ -92,7 +92,7 @@ namespace Exporter
 			if (!codedInputStream.ReadVarint32(&fileTypeId) || fileTypeId != CoverageDataSerializer::FileTypeId)
 				throw std::runtime_error(errorIfNotCorrectFormat);
 
-			pb::CoverageData coverageDataProtoBuff;
+			coverage_pb::CoverageData coverageDataProtoBuff;
 
 			ReadMessage(codedInputStream, coverageDataProtoBuff);
 

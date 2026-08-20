@@ -17,6 +17,8 @@
 #include "stdafx.h"
 
 #include "CppCoverage/BreakPoint.hpp"
+#include "CppCoverage/Address.hpp"
+#include "CppCoverage/CppCoverageException.hpp"
 #include <random>
 
 using CppCoverage::BreakPoint;
@@ -25,6 +27,8 @@ namespace CppCoverageTest
 {
 	namespace
 	{
+		using Instruction = BreakPoint::Instruction;
+
 		//-------------------------------------------------------------------------
 		std::set<size_t> GetRandomIndexes(int count, int maxValue)
 		{
@@ -38,23 +42,27 @@ namespace CppCoverageTest
 		}
 
 		//---------------------------------------------------------------------
-		std::vector<unsigned char> GenerateValues(int valueCount,
-		                                          int moduloValue)
+		std::vector<Instruction> GenerateValues(int valueCount,
+		                                        int moduloValue)
 		{
-			std::vector<unsigned char> values;
+			std::vector<Instruction> values(valueCount);
 
 			for (auto i = 0; i < valueCount; ++i)
-				values.push_back(i % moduloValue);
+			{
+				for (size_t byte = 0; byte < values[i].size(); ++byte)
+					values[i][byte] =
+					    static_cast<unsigned char>((i + byte) % moduloValue);
+			}
 			return values;
 		}
 
 		//---------------------------------------------------------------------
-		std::map<DWORD64, unsigned char> BuildOldInstructionsMap(
+		std::map<DWORD64, Instruction> BuildOldInstructionsMap(
 		    BreakPoint::InstructionCollection& oldInstructionCollection,
 		    const std::vector<DWORD64>& addresses)
 		{
 			std::set<DWORD64> addressesSet{addresses.begin(), addresses.end()};
-			std::map<DWORD64, unsigned char> oldInstructionsMap;
+			std::map<DWORD64, Instruction> oldInstructionsMap;
 
 			for (const auto& pair : oldInstructionCollection)
 			{
@@ -100,10 +108,16 @@ namespace CppCoverageTest
 			if (it != oldInstructionsMap.end())
 			{
 				ASSERT_EQ(BreakPoint::breakPointInstruction, values[i]);
-				ASSERT_EQ(i % 100, it->second);
+				for (size_t byte = 0; byte < it->second.size(); ++byte)
+				{
+					ASSERT_EQ((i + byte) % 100, it->second[byte]);
+				}
 			}
 			else
-				ASSERT_EQ(i % 100, values[i]);
+			{
+				for (size_t byte = 0; byte < values[i].size(); ++byte)
+					ASSERT_EQ((i + byte) % 100, values[i][byte]);
+			}
 		}
 	}
 
@@ -111,14 +125,82 @@ namespace CppCoverageTest
 	TEST(BreakPointTest, SetBreakPointsSingle)
 	{
 		CppCoverage::BreakPoint breakPoint;
-		unsigned char value = 42;
+		Instruction value;
+		value.fill(42);
 
 		auto oldInstructionCollection =
 		    breakPoint.SetBreakPoints(GetCurrentProcess(), {ToDWORD64(&value)});
 
 		ASSERT_EQ(1, oldInstructionCollection.size());
 		ASSERT_EQ(BreakPoint::breakPointInstruction, value);
-		ASSERT_EQ(42, oldInstructionCollection.at(0).first);
+		Instruction expected;
+		expected.fill(42);
+		ASSERT_EQ(expected, oldInstructionCollection.at(0).first);
 		ASSERT_EQ(ToDWORD64(&value), oldInstructionCollection.at(0).second);
 	}
+
+	//-------------------------------------------------------------------------
+	TEST(BreakPointTest, RemovesDuplicateAddresses)
+	{
+		BreakPoint breakPoint;
+		Instruction value;
+		value.fill(42);
+		const auto address = ToDWORD64(&value);
+
+		auto oldInstructions = breakPoint.SetBreakPoints(
+		    GetCurrentProcess(), {address, address});
+
+		ASSERT_EQ(1, oldInstructions.size());
+		ASSERT_EQ(BreakPoint::breakPointInstruction, value);
+	}
+
+	//-------------------------------------------------------------------------
+	TEST(BreakPointTest, RestoresCompleteInstruction)
+	{
+		BreakPoint breakPoint;
+		Instruction value;
+		value.fill(42);
+		const auto original = value;
+		CppCoverage::Address address{
+		    GetCurrentProcess(), reinterpret_cast<void*>(&value)};
+
+		auto oldInstructions = breakPoint.SetBreakPoints(
+		    GetCurrentProcess(), {ToDWORD64(&value)});
+		breakPoint.RemoveBreakPoint(address, oldInstructions.at(0).first);
+
+		ASSERT_EQ(original, value);
+	}
+
+	//-------------------------------------------------------------------------
+	TEST(BreakPointTest, SetsBreakPointsAcrossReadRanges)
+	{
+		BreakPoint breakPoint;
+		std::vector<Instruction> values(4097);
+		for (auto& value : values)
+			value.fill(42);
+		const auto secondIndex =
+		    4096 / BreakPoint::breakPointInstruction.size();
+
+		auto oldInstructions = breakPoint.SetBreakPoints(
+		    GetCurrentProcess(),
+		    {ToDWORD64(&values.front()), ToDWORD64(&values.at(secondIndex))});
+
+		ASSERT_EQ(2, oldInstructions.size());
+		ASSERT_EQ(BreakPoint::breakPointInstruction, values.front());
+		ASSERT_EQ(BreakPoint::breakPointInstruction, values.at(secondIndex));
+	}
+
+#ifdef _M_ARM64
+	//-------------------------------------------------------------------------
+	TEST(BreakPointTest, RejectsUnalignedArm64Address)
+	{
+		CppCoverage::BreakPoint breakPoint;
+		std::array<unsigned char, 8> values{};
+
+		ASSERT_THROW(
+		    breakPoint.SetBreakPoints(
+		        GetCurrentProcess(), {ToDWORD64(values.data() + 1)}),
+		    CppCoverage::CppCoverageException);
+	}
+#endif
 }

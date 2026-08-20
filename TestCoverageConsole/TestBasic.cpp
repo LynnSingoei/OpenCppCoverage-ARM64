@@ -31,7 +31,7 @@ namespace TestCoverageConsole
 	//-------------------------------------------------------------------------
 	void RunTestBasic()
 	{
-		if (false)
+		if (false) // ExcludedLine fixture
 		{
 			int answer = 42;
 		}
@@ -70,6 +70,4 @@ namespace TestCoverageConsole
 
 		auto fct = (void (*)())GetProcAddress(module, "TestUnloadDll");
 		fct();	}
-
-	const std::string ExcludedLine = "For CodeCoverageRunnerTest::ExcludedLine";
 }

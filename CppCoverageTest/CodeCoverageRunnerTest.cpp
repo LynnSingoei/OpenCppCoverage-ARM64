@@ -213,9 +213,16 @@ namespace CppCoverageTest
 		int line = 28;
 
 		TestLine(file, line++, true);
-		ASSERT_EQ(nullptr, file[line++]);
+		++line; // Compilers differ on whether the lambda brace has line data.
 		TestLine(file, line++, true);
-		TestLine(file, line++, true);
+		// The MSVC ARM64 compiler emits no line-table entry for the lambda's
+		// closing brace, unlike the x86 and x64 compilers. This is a
+		// code-generation difference confirmed directly in the PDB; see
+		// DebugInformationEnumeratorTest for the same observation.
+#ifndef _M_ARM64
+		TestLine(file, line, true);
+#endif
+		++line;
 		TestLine(file, line++, true);
 	}
 

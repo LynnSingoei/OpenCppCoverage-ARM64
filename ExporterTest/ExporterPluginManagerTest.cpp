@@ -84,14 +84,14 @@ namespace ExporterTest
 			PluginLoaderMock pluginLoader;
 
 			EXPECT_CALL(pluginLoader, TryLoadPlugin(pluginPath_, _))
-			    .WillOnce(testing::Invoke([&](const auto& p, const auto&) {
+			    .WillOnce([&](const auto& p, const auto&) {
 				    EXPECT_EQ(pluginPath_, p);
 				    auto plugin = std::make_unique<
 				        Exporter::LoadedPlugin<Plugin::IExportPlugin>>(nullptr);
 				    plugin->Set(std::move(exportPlugin));
 
 				    return plugin;
-			    }));
+			    });
 			return CreateManager(pluginLoader);
 		}
 
@@ -170,14 +170,14 @@ namespace ExporterTest
 		const auto errorMessage = "errorMessage";
 
 		EXPECT_CALL(pluginLoader, TryLoadPlugin(pluginPath_, _))
-		    .WillOnce(testing::Invoke([&](const auto&, const auto&) {
+		    .WillOnce([&](const auto&, const auto&) {
 			    throw 42;
 			    return nullptr;
-		    }))
-		    .WillOnce(testing::Invoke([&](const auto&, const auto&) {
+		    })
+		    .WillOnce([&](const auto&, const auto&) {
 			    throw std::runtime_error(errorMessage);
 			    return nullptr;
-		    }));
+		    });
 
 		ASSERT_THROW(CreateManager(pluginLoader), std::runtime_error);
 
@@ -209,14 +209,14 @@ namespace ExporterTest
 		const auto errorMessage = "errorMessage";
 
 		EXPECT_CALL(*exportPlugin, Export(_, _))
-		    .WillOnce(testing::Invoke([](const auto&, const auto&) {
+		    .WillOnce([](const auto&, const auto&) {
 			    throw 42;
 			    return std::nullopt;
-		    }))
-		    .WillOnce(testing::Invoke([&](const auto&, const auto&) {
+		    })
+		    .WillOnce([&](const auto&, const auto&) {
 			    throw std::runtime_error(errorMessage);
 			    return std::nullopt;
-		    }));
+		    });
 
 		auto pluginManager = CreateManager(std::move(exportPlugin));
 		Plugin::CoverageData coverageData{L"", 0};
