@@ -131,12 +131,23 @@ that had been verified, and nothing in the evidence said so.
 
 Two things now prevent that:
 
-- Each job passes `/p:PreferredToolArchitecture` (`arm64` on the ARM64 runner,
-  `x64` on the x64 runners).
+- Each job resolves the MSBuild binary that matches the intended host
+  (`Build/Scripts/ResolveMSBuild.ps1`) instead of using whatever
+  `microsoft/setup-msbuild` puts on PATH, which is the 32-bit MSBuild. Passing
+  `/p:PreferredToolArchitecture=arm64` on its own was **not** sufficient: run
+  `32354151814` passed that property and MSBuild still invoked `cl.exe` 32 times
+  and `link.exe` 16 times from `bin\HostX86\arm64`. The script also queries
+  MSBuild's evaluated `PreferredToolArchitecture`, `VCToolArchitecture`,
+  `VCToolsVersion`, `WindowsTargetPlatformVersion` and `ExecutablePath` via
+  `-getProperty` and fails before compiling if the tool architecture is not the
+  requested one. It refuses to fall back to another host.
 - `Assert-BuildToolchain.ps1` parses the actual `cl.exe` and `link.exe` command
   lines out of the build log after every build and fails when any of them comes
   from an unexpected host directory, when the toolset version is not consistent
   across invocations, or when no invocation is found at all.
+
+The second check is what caught the first one being insufficient. A gate that
+only asserts intent is not a gate; the log parser asserts what actually ran.
 
 This matters beyond tidiness. MSVC decodes a source file that has no BOM using
 the ambient code page, so anything that changes which compiler process runs, or

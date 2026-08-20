@@ -48,6 +48,22 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      # setup-msbuild puts the 32-bit MSBuild on PATH. On the ARM64 runner that
+      # host silently selects the emulated bin\HostX86\arm64 compiler, and
+      # /p:PreferredToolArchitecture alone did not override it. Resolve the
+      # MSBuild that matches the host we intend to build with, and prove which
+      # tool architecture it evaluates before compiling anything.
+      - name: Resolve native MSBuild
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\ResolveMSBuild.ps1 `
+            -HostArchitecture ${{ matrix.tool_architecture }} `
+            -Project Tools\Tools.vcxproj `
+            -Configuration Debug `
+            -Platform ${{ matrix.platform }} `
+            -SummaryPath artifacts\logs\msbuild-host-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Record runner architecture
         shell: pwsh
         run: |
@@ -105,7 +121,7 @@ jobs:
       - name: Build Debug
         shell: pwsh
         run: |
-          msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
+          & "$env:MSBUILD_EXE" /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
             /p:PreferredToolArchitecture=${{ matrix.tool_architecture }} `
             /bl:artifacts\logs\build-Debug-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Debug-${{ matrix.platform }}.log;verbosity=normal"
@@ -133,7 +149,7 @@ jobs:
       - name: Build Release
         shell: pwsh
         run: |
-          msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+          & "$env:MSBUILD_EXE" /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
             /p:PreferredToolArchitecture=${{ matrix.tool_architecture }} `
             /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Release-${{ matrix.platform }}.log;verbosity=normal"
