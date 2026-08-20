@@ -131,6 +131,7 @@ function Get-RequiredArtifactFailures {
         [string]$Root,
 
         [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
         [string[]]$RequiredArtifacts
     )
 

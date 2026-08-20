@@ -61,6 +61,12 @@ $missing = ConvertFrom-GTestOutput -Suite Alpha -Output "" -ExitCode -1 -Present
 Assert-Fails { Assert-TestResults @($missing) @("Alpha") } "executable was omitted"
 
 $missingFixtureRoot = Join-Path $PSScriptRoot "definitely-missing-fixture-root"
+$emptyFixtureFailures = @(Get-RequiredArtifactFailures `
+    -Root $missingFixtureRoot `
+    -RequiredArtifacts @())
+if ($emptyFixtureFailures.Count -ne 0) {
+    throw "An empty required-fixture manifest produced failures."
+}
 $fixtureFailures = @(Get-RequiredArtifactFailures `
     -Root $missingFixtureRoot `
     -RequiredArtifacts @("DefaultTest.dll"))
