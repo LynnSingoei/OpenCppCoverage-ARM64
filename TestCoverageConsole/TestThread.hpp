@@ -23,8 +23,14 @@ namespace TestCoverageConsole
 	void RunThread();	
 
 	//-------------------------------------------------------------------------
+	inline std::filesystem::path GetTestThreadPath()
+	{
+		return std::filesystem::path(__FILE__).replace_extension("cpp");
+	}
+
+	//-------------------------------------------------------------------------
 	inline std::filesystem::path GetTestThreadFilename()
 	{
-		return std::filesystem::path(__FILE__).replace_extension("cpp").filename();
+		return GetTestThreadPath().filename();
 	}
 }

@@ -4,6 +4,49 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Build\Scripts\ToolchainValidation.ps1")
+$requiredVCToolsVersion = "14.44.35207"
+$requiredWindowsSdkVersion = "10.0.26100.0"
+$requiredToolchainVariables = @(
+    "VCToolsInstallDir",
+    "VCToolsVersion",
+    "WindowsSdkDir",
+    "WindowsSDKVersion",
+    "INCLUDE",
+    "LIB"
+)
+foreach ($name in $requiredToolchainVariables) {
+    if (-not [Environment]::GetEnvironmentVariable($name, "Process")) {
+        throw "The coherent MSVC environment is not initialized: $name is missing."
+    }
+}
+$vcToolsVersion = $env:VCToolsVersion.TrimEnd("\")
+if ($vcToolsVersion -ne $requiredVCToolsVersion) {
+    throw "Dependency restore requires VCToolsVersion $requiredVCToolsVersion; got $vcToolsVersion."
+}
+$windowsSdkVersion = $env:WindowsSDKVersion.TrimEnd("\")
+if ($windowsSdkVersion -ne $requiredWindowsSdkVersion) {
+    throw "Dependency restore requires Windows SDK $requiredWindowsSdkVersion; got $windowsSdkVersion."
+}
+$resolvedCl = @(Get-Command cl.exe -CommandType Application)[0].Source
+$resolvedLink = @(Get-Command link.exe -CommandType Application)[0].Source
+$vcToolsRoot = [IO.Path]::GetFullPath($env:VCToolsInstallDir).TrimEnd("\")
+foreach ($tool in @($resolvedCl, $resolvedLink)) {
+    if (-not [IO.Path]::GetFullPath($tool).StartsWith(
+            $vcToolsRoot + "\", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "'$tool' is outside VCToolsInstallDir '$vcToolsRoot'."
+    }
+}
+$targetArchitecture = @{
+    "x86-windows" = "x86"
+    "x64-windows" = "x64"
+    "arm64-windows" = "arm64"
+}[$Triplet]
+Assert-CoherentEnvironmentPaths `
+    -Paths (@($env:INCLUDE, $env:LIB) -split ";") `
+    -VCToolsVersion $vcToolsVersion `
+    -WindowsSdkVersion $windowsSdkVersion `
+    -TargetArchitecture $targetArchitecture
 $vcpkgCommit = "06d00ffa491e4668627728f14b891d22c6fea146"
 $repositoryRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $vcpkgRoot = if ($env:VCPKG_ROOT) {
@@ -66,3 +109,7 @@ if ($env:GITHUB_ENV) {
 }
 
 Write-Output "VCPKG_ROOT=$vcpkgRoot"
+Write-Output "DependencyToolchain=$vcToolsVersion"
+Write-Output "DependencyCompiler=$resolvedCl"
+Write-Output "DependencyLinker=$resolvedLink"
+Write-Output "DependencyWindowsSDK=$windowsSdkVersion"

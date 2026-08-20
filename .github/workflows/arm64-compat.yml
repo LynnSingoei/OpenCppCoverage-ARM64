@@ -1,0 +1,135 @@
+name: Native Windows ARM64
+
+on:
+  push:
+    branches:
+      - 'ci/**'
+      - 'repair/**'
+  workflow_dispatch:
+
+jobs:
+  native-arm64:
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify native architecture and test accounting
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\logs | Out-Null
+          $osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          $processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+          @(
+            "OS=$([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+            "OSArchitecture=$osArchitecture"
+            "ProcessArchitecture=$processArchitecture"
+            "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          ) | Tee-Object artifacts\logs\environment-ARM64.txt
+          if ($osArchitecture -ne "Arm64") {
+            throw "This job requires native Windows ARM64, but got $osArchitecture."
+          }
+          .\Build\Scripts\Test-TestResults.ps1
+          .\Build\Scripts\Test-ToolchainValidation.ps1
+          .\Build\Scripts\Test-Arm64ProjectGraph.ps1
+
+      - name: Cache installed dependencies
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-v143-14.44.35207-sdk-10.0.26100.0-${{ runner.os }}-${{ runner.arch }}-arm64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**') }}
+
+      - name: Restore pinned dependencies
+        shell: pwsh
+        run: |
+          . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
+            -Platform ARM64 -RequiredVCToolsVersion 14.44.35207 `
+            -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -LogPath artifacts\logs\toolchain-restore-ARM64.log
+          & .\InstallThirdPartyLibraries.ps1 -Triplet arm64-windows 2>&1 |
+            Tee-Object artifacts\logs\restore-ARM64.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Debug
+        shell: pwsh
+        run: |
+          . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
+            -Platform ARM64 -RequiredVCToolsVersion 14.44.35207 `
+            -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -LogPath artifacts\logs\toolchain-Debug-ARM64.log
+          $msbuild = (Get-Command msbuild.exe).Source
+          & $msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=ARM64 `
+            /p:PlatformToolset=v143 `
+            /p:VCToolsVersion=14.44.35207 `
+            /p:WindowsTargetPlatformVersion=10.0.26100.0 `
+            /bl:artifacts\logs\build-Debug-ARM64.binlog `
+            /fl "/flp:logfile=artifacts\logs\build-Debug-ARM64.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run Debug tests
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\RunTests.ps1 -Platform ARM64 `
+            -Configuration Debug -LogDirectory artifacts\logs
+
+      - name: Run end-to-end coverage oracle
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Run-E2ECoverage.ps1 -Platform ARM64 `
+            -Configuration Debug -LogDirectory artifacts\logs
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
+            -Platform ARM64 -RequiredVCToolsVersion 14.44.35207 `
+            -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -LogPath artifacts\logs\toolchain-Release-ARM64.log
+          $msbuild = (Get-Command msbuild.exe).Source
+          & $msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=ARM64 `
+            /p:PlatformToolset=v143 `
+            /p:VCToolsVersion=14.44.35207 `
+            /p:WindowsTargetPlatformVersion=10.0.26100.0 `
+            /bl:artifacts\logs\build-Release-ARM64.binlog `
+            /fl "/flp:logfile=artifacts\logs\build-Release-ARM64.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package, re-expand, scan, and checksum
+        shell: pwsh
+        run: |
+          & .\CreateRelease.ps1 -Platform ARM64 -Configuration Release 2>&1 |
+            Tee-Object artifacts\logs\package-ARM64.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $checksums = @(Get-ChildItem artifacts\*.zip.sha256 -File -ErrorAction Stop)
+          if ($checksums.Count -ne 1) {
+            throw "Expected exactly one package checksum, found $($checksums.Count)."
+          }
+          $checksum = $checksums[0]
+          $expected = ((Get-Content -LiteralPath $checksum.FullName -Raw) -split '\s+')[0]
+          $zip = $checksum.FullName -replace '\.sha256$', ''
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Package checksum mismatch for $zip."
+          }
+          "Verified package checksum: $actual" |
+            Tee-Object artifacts\logs\checksum-ARM64.txt
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-arm64-logs
+          path: artifacts/logs
+
+      - name: Upload distributable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenCppCoverage-windows-arm64
+          path: |
+            artifacts/*.zip
+            artifacts/*.sha256
+            artifacts/*-expanded-pe-manifest.json

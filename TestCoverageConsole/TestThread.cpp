@@ -18,17 +18,30 @@
 
 #include "TestThread.hpp"
 
+#include <stdexcept>
 #include <thread>
 
 namespace TestCoverageConsole
 {
 	//-----------------------------------------------------------------------------
+	void __declspec(dllexport) __declspec(noinline) ThreadWorker(int* answer)
+	{
+		*answer = 42; // @ThreadCoverageRequired
+	}
+
+	//-----------------------------------------------------------------------------
+	void __declspec(dllexport) __declspec(noinline) UncalledThreadWorker(int* answer)
+	{
+		*answer = -1; // @ThreadCoverageNotExpected
+	}
+
+	//-----------------------------------------------------------------------------
 	void RunThread()
 	{
-		std::thread t([]()
-		{
-			int answer = 42;
-		});
+		int answer = 0;
+		std::thread t(ThreadWorker, &answer);
 		t.join();
+		if (answer != 42)
+			throw std::runtime_error("Worker thread did not run.");
 	}
 }

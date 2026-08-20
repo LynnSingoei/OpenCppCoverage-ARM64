@@ -16,11 +16,10 @@
 
 #include "stdafx.h"
 
-#include <fstream>
-
 #include "CppCoverage/DebugInformationEnumerator.hpp"
 #include "TestCoverageConsole/TestDebugInformationEnumerator.hpp"
 #include "TestCoverageConsole/TestCoverageConsole.hpp"
+#include "TestTools.hpp"
 
 namespace CppCoverageTest
 {
@@ -57,23 +56,6 @@ namespace CppCoverageTest
 			std::vector<int> lines_;
 		};
 
-		//---------------------------------------------------------------------------
-		std::vector<int>
-		GetLineNumbersWithTag(const std::filesystem::path& path,
-		                      const std::wstring& tag)
-		{
-			std::vector<int> lines;
-			std::wifstream ifs(path.wstring());
-			std::wstring line;
-
-			for (int lineNumber = 1; std::getline(ifs, line); ++lineNumber)
-			{
-				if (line.find(tag) != std::wstring::npos)
-					lines.push_back(lineNumber);
-			}
-
-			return lines;
-		}
 	}
 
 	//-------------------------------------------------------------------------
@@ -90,9 +72,11 @@ namespace CppCoverageTest
 		ASSERT_TRUE(debugInformationEnumerator.Enumerate(
 		    binary, debugInformationHandler));
 
-		auto lineWithDebugInfo = GetLineNumbersWithTag(
-		    debugInformationHandler.selectedFullPath_, L"@DebugInfoExpected");
+		auto requiredLines = TestTools::GetLineNumbersWithTag(
+		    debugInformationHandler.selectedFullPath_, L"@DebugInfoRequired");
 
-		ASSERT_EQ(debugInformationHandler.lines_, lineWithDebugInfo);
+		ASSERT_EQ(1, requiredLines.size());
+		ASSERT_FALSE(debugInformationHandler.selectedFullPath_.empty());
+		ASSERT_EQ(requiredLines, debugInformationHandler.lines_);
 	}
 }

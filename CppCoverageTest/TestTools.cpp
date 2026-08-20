@@ -18,6 +18,7 @@
 #include "TestTools.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <boost/algorithm/string.hpp>
 
 #include "CppCoverage/StartInfo.hpp"
@@ -90,6 +91,24 @@ namespace CppCoverageTest
 		const std::string GetProgramToRun() { return TestCoverageConsole::GetOutputBinaryPath().string(); }
 
 		//---------------------------------------------------------------------
+		std::vector<int> GetLineNumbersWithTag(
+		    const std::filesystem::path& path,
+		    const std::wstring& tag)
+		{
+			std::vector<int> lines;
+			std::wifstream ifs(path.wstring());
+			std::wstring line;
+
+			for (int lineNumber = 1; std::getline(ifs, line); ++lineNumber)
+			{
+				if (line.find(tag) != std::wstring::npos)
+					lines.push_back(lineNumber);
+			}
+
+			return lines;
+		}
+
+		//---------------------------------------------------------------------
 		CoverageArgs::CoverageArgs(
 			const std::vector<std::wstring>& arguments,
 			const std::wstring& modulePattern,
@@ -155,4 +174,3 @@ namespace CppCoverageTest
 		}
 	}
 }
-

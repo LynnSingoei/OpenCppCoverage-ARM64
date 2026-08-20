@@ -21,6 +21,7 @@
 #include <string>
 #include <functional>
 #include <filesystem>
+#include <vector>
 
 #include "CppCoverage/OptionsParser.hpp"
 #include "CppCoverage/Options.hpp"
@@ -47,6 +48,9 @@ namespace CppCoverageTest
 
 		const std::string GetOptionPrefix();
 		const std::string GetProgramToRun();
+		std::vector<int> GetLineNumbersWithTag(
+		    const std::filesystem::path& path,
+		    const std::wstring& tag);
 
 		//---------------------------------------------------------------------
 		struct CoverageArgs
@@ -78,4 +82,3 @@ namespace CppCoverageTest
 		Plugin::CoverageData ComputeCoverageDataPatterns(const CoverageArgs& args);
 	}
 }
-

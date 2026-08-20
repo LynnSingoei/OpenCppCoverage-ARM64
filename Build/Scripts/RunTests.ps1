@@ -9,8 +9,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 $repositoryRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 . (Join-Path $PSScriptRoot "PeArchitecture.ps1")
+. (Join-Path $PSScriptRoot "TestResults.ps1")
 $outputDirectory = switch ($Platform) {
     "x86" { Join-Path $repositoryRoot $Configuration }
     "x64" { Join-Path $repositoryRoot "x64\$Configuration" }
@@ -19,8 +21,12 @@ $outputDirectory = switch ($Platform) {
 
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
 $cppCoverageExclusions = @("CodeCoverageRunnerTest.OptimizedBuild")
-if ($Platform -in @("x86", "ARM64")) {
+if ($Platform -eq "x86") {
     $cppCoverageExclusions += "CppCliTest.ManagedUnManagedModule"
+}
+$requiredFixtures = @()
+if ($Platform -in @("x64", "ARM64")) {
+    $requiredFixtures += "DefaultTest.dll"
 }
 @(
     "OS=$([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
@@ -28,6 +34,7 @@ if ($Platform -in @("x86", "ARM64")) {
     "ProcessArchitecture=$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
     "TestArchitecture=$Platform"
     "ExcludedTests=$($cppCoverageExclusions -join ',')"
+    "RequiredFixtures=$($requiredFixtures -join ',')"
 ) | Set-Content -Path (Join-Path $LogDirectory "environment-$Platform-$Configuration.txt")
 
 $outputScan = Assert-PeArchitecture -Path $outputDirectory -ExpectedArchitecture $Platform
@@ -38,7 +45,7 @@ $outputScan |
     ConvertTo-Json |
     Set-Content -Path (Join-Path $LogDirectory "pe-$Platform-$Configuration.json") -Encoding utf8
 
-$tests = @(
+$requiredSuites = @(
     @{
         Name = "CppCoverageTest"
         Arguments = @("--gtest_filter=-$($cppCoverageExclusions -join ':')")
@@ -50,16 +57,33 @@ $tests = @(
     @{ Name = "ToolsTest"; Arguments = @() }
 )
 
-foreach ($test in $tests) {
+$results = [System.Collections.Generic.List[object]]::new()
+foreach ($test in $requiredSuites) {
     $executable = Join-Path $outputDirectory "$($test.Name).exe"
     if (-not (Test-Path $executable)) {
-        throw "Test executable is missing: $executable"
+        $results.Add((ConvertFrom-GTestOutput `
+            -Suite $test.Name -Output "" -ExitCode -1 -Present $false))
+        continue
     }
 
     $logPath = Join-Path $LogDirectory "$($test.Name)-$Platform-$Configuration.log"
     & $executable @($test.Arguments) 2>&1 | Tee-Object -FilePath $logPath
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "$($test.Name) failed with exit code $exitCode. See $logPath."
-    }
+    $output = Get-Content -LiteralPath $logPath -Raw
+    $results.Add((ConvertFrom-GTestOutput `
+        -Suite $test.Name -Output $output -ExitCode $exitCode))
+}
+
+$summaryPath = Join-Path $LogDirectory "test-summary-$Platform-$Configuration.json"
+$results | ConvertTo-Json -Depth 4 | Set-Content -Path $summaryPath -Encoding utf8
+$results | Format-Table Suite, Present, ExitCode, Ran, Passed, Failed -AutoSize
+
+$failures = @(Get-TestResultFailures `
+    -Results @($results) `
+    -RequiredSuites @($requiredSuites | ForEach-Object Name))
+$failures += @(Get-RequiredArtifactFailures `
+    -Root $outputDirectory `
+    -RequiredArtifacts $requiredFixtures)
+if ($failures.Count -gt 0) {
+    throw "Native test gate failed:`n - $($failures -join "`n - ")"
 }

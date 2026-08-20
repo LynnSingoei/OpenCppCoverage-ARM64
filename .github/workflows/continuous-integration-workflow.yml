@@ -2,6 +2,9 @@ name: Windows builds and tests
 
 on:
   push:
+    branches-ignore:
+      - 'ci/**'
+      - 'repair/**'
   pull_request:
   workflow_dispatch:
 
@@ -57,15 +60,27 @@ jobs:
             throw "The ARM64 job is not running on a native ARM64 operating system."
           }
 
+      - name: Verify fail-closed test accounting
+        shell: pwsh
+        run: |
+          .\Build\Scripts\Test-TestResults.ps1
+          .\Build\Scripts\Test-ToolchainValidation.ps1
+          .\Build\Scripts\Test-Arm64ProjectGraph.ps1
+
       - name: Cache installed dependencies
         uses: actions/cache@v4
         with:
           path: vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**') }}
+          key: vcpkg-v143-14.44.35207-sdk-10.0.26100.0-${{ runner.os }}-${{ runner.arch }}-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**') }}
 
       - name: Restore pinned dependencies
         shell: pwsh
         run: |
+          . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
+            -Platform ${{ matrix.platform }} `
+            -RequiredVCToolsVersion 14.44.35207 `
+            -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -LogPath artifacts\logs\toolchain-restore-${{ matrix.platform }}.log
           & .\InstallThirdPartyLibraries.ps1 -Triplet ${{ matrix.triplet }} 2>&1 |
             Tee-Object artifacts\logs\restore-${{ matrix.platform }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -73,9 +88,19 @@ jobs:
       - name: Build Debug
         shell: pwsh
         run: |
-          msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
+          . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
+            -Platform ${{ matrix.platform }} `
+            -RequiredVCToolsVersion 14.44.35207 `
+            -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -LogPath artifacts\logs\toolchain-Debug-${{ matrix.platform }}.log
+          $msbuild = (Get-Command msbuild.exe).Source
+          & $msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
+            /p:PlatformToolset=v143 `
+            /p:VCToolsVersion=14.44.35207 `
+            /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Debug-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Debug-${{ matrix.platform }}.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run tests
         shell: pwsh
@@ -83,12 +108,28 @@ jobs:
           & .\Build\Scripts\RunTests.ps1 -Platform ${{ matrix.test_platform }} `
             -Configuration Debug -LogDirectory artifacts\logs
 
+      - name: Run end-to-end coverage oracle
+        shell: pwsh
+        run: |
+          & .\Build\Scripts\Run-E2ECoverage.ps1 -Platform ${{ matrix.test_platform }} `
+            -Configuration Debug -LogDirectory artifacts\logs
+
       - name: Build Release
         shell: pwsh
         run: |
-          msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+          . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
+            -Platform ${{ matrix.platform }} `
+            -RequiredVCToolsVersion 14.44.35207 `
+            -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -LogPath artifacts\logs\toolchain-Release-${{ matrix.platform }}.log
+          $msbuild = (Get-Command msbuild.exe).Source
+          & $msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+            /p:PlatformToolset=v143 `
+            /p:VCToolsVersion=14.44.35207 `
+            /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `
             /fl "/flp:logfile=artifacts\logs\build-Release-${{ matrix.platform }}.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package and verify
         shell: pwsh
@@ -96,6 +137,17 @@ jobs:
           & .\CreateRelease.ps1 -Platform ${{ matrix.package_platform }} -Configuration Release 2>&1 |
             Tee-Object artifacts\logs\package-${{ matrix.platform }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $checksums = @(Get-ChildItem artifacts\*.zip.sha256 -File -ErrorAction Stop)
+          if ($checksums.Count -ne 1) {
+            throw "Expected exactly one package checksum, found $($checksums.Count)."
+          }
+          $checksum = $checksums[0]
+          $expected = ((Get-Content -LiteralPath $checksum.FullName -Raw) -split '\s+')[0]
+          $zip = $checksum.FullName -replace '\.sha256$', ''
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Package checksum mismatch for $zip."
+          }
 
       - name: Upload logs
         if: always()

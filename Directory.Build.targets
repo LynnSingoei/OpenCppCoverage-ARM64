@@ -1,4 +1,18 @@
 <Project>
+  <Target Name="ValidateArm64BuildEnvironment"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(Platform)' == 'ARM64'">
+    <Error Condition="'$(PlatformToolset)' != 'v143'"
+           Text="ARM64 requires PlatformToolset=v143, but resolved '$(PlatformToolset)'." />
+    <Error Condition="'$(VCToolsVersion)' == ''"
+           Text="ARM64 requires an initialized VCToolsVersion." />
+    <Error Condition="'$(VCToolsVersion)' != '14.44.35207'"
+           Text="ARM64 requires VCToolsVersion=14.44.35207, but resolved '$(VCToolsVersion)'." />
+    <Error Condition="'$(WindowsTargetPlatformVersion)' != '10.0.26100.0'"
+           Text="ARM64 requires WindowsTargetPlatformVersion=10.0.26100.0, but resolved '$(WindowsTargetPlatformVersion)'." />
+    <Message Importance="High"
+             Text="ARM64 toolchain: PlatformToolset=$(PlatformToolset); VCToolsVersion=$(VCToolsVersion); VCToolsInstallDir=$(VCToolsInstallDir); WindowsSDKVersion=$(WindowsSDKVersion); WindowsSdkDir=$(WindowsSdkDir); CLToolPath=$(CLToolPath); LinkToolPath=$(LinkToolPath)" />
+  </Target>
   <Import Project="$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets"
           Condition="Exists('$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets')" />
   <Target Name="EnsureVcpkgIntegration" BeforeTargets="PrepareForBuild"

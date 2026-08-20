@@ -19,13 +19,7 @@
 namespace TestCoverageConsole
 {
 	//-------------------------------------------------------------------------
-	// Use dllexport to make sure this function is not removed by the linker as
-	// this function is never called.
-	void __declspec(dllexport) TestDebugInformationEnumerator()
-	{ // @DebugInfoExpected
-		if (false) // @DebugInfoExpected
-		{
-			int answer = 42; // @DebugInfoExpected
-		}
-	} // @DebugInfoExpected
+	// Keeping the complete fixture on one source line prevents target-specific
+	// closing-brace records while preserving an exact PDB line-set assertion.
+	void __declspec(dllexport) TestDebugInformationEnumerator() { volatile int answer = 42; (void)answer; } // @DebugInfoRequired
 }

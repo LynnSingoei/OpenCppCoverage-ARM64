@@ -209,14 +209,19 @@ namespace CppCoverageTest
 
 		Plugin::CoverageData coverageData = ComputeCoverageData(TestCoverageConsole::TestThread, filter);
 		auto& file = GetFirstFileCoverage(coverageData);
+		auto requiredLines = TestTools::GetLineNumbersWithTag(
+		    TestCoverageConsole::GetTestThreadPath(),
+		    L"@ThreadCoverageRequired");
+		auto unexecutedLines = TestTools::GetLineNumbersWithTag(
+		    TestCoverageConsole::GetTestThreadPath(),
+		    L"@ThreadCoverageNotExpected");
 
-		int line = 28;
-
-		TestLine(file, line++, true);
-		++line; // Compilers differ on whether the lambda brace has line data.
-		TestLine(file, line++, true);
-		TestLine(file, line++, true);
-		TestLine(file, line++, true);
+		ASSERT_EQ(1, requiredLines.size());
+		ASSERT_EQ(1, unexecutedLines.size());
+		for (auto requiredLine : requiredLines)
+			TestLine(file, requiredLine, true);
+		for (auto unexecutedLine : unexecutedLines)
+			TestLine(file, unexecutedLine, false);
 	}
 
 	//-------------------------------------------------------------------------
