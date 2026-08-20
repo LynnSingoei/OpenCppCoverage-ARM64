@@ -1,11 +1,17 @@
 name: WinPort independent asset verification
 
 # Authored by the WinPort integration session, not by the porting session.
-# It never builds the product. It downloads the already-published release asset,
-# proves the bytes match the recorded checksum, proves every shipped image is
-# ARM64, and then executes the shipped OpenCppCoverage.exe against a fixture
-# compiled on the runner. That last step is the only thing that can show the
-# packaged binaries actually run on native Windows ARM64 hardware.
+# It never builds the product. It downloads the already-published release asset
+# and subjects it to a matched pair of tests across runner families:
+#
+#   * On native ARM64 hardware the shipped binaries must run and produce a
+#     correct coverage report. Only execution can show that.
+#   * On x64 hardware the very same binaries must REFUSE to start with
+#     ERROR_BAD_EXE_FORMAT (193). A package that runs on x64 is not an ARM64
+#     package, so this negative control is what makes the positive result mean
+#     something: it rules out an x64 or fat binary passing as ARM64.
+#
+# Both directions must hold. Either one alone is weak evidence.
 
 on:
   push:
@@ -25,13 +31,14 @@ on:
 permissions:
   contents: read
 
+env:
+  ASSET_URL: ${{ github.event.inputs.asset_url || 'https://github.com/LynnSingoei/OpenCppCoverage-ARM64/releases/download/arm64-81376ba/OpenCppCoverage-0.9.9.0-windows-arm64.zip' }}
+  EXPECTED_SHA256: ${{ github.event.inputs.expected_sha256 || '83f0e1c19d89c534a13a67eef4ebdacb85593aa4696d06ca4925ac03ecfee7a5' }}
+
 jobs:
-  verify:
-    name: Verify published ARM64 asset on native hardware
+  native-arm64:
+    name: Native ARM64 - the package must run
     runs-on: windows-11-arm
-    env:
-      ASSET_URL: ${{ github.event.inputs.asset_url || 'https://github.com/LynnSingoei/OpenCppCoverage-ARM64/releases/download/arm64-81376ba/OpenCppCoverage-0.9.9.0-windows-arm64.zip' }}
-      EXPECTED_SHA256: ${{ github.event.inputs.expected_sha256 || '83f0e1c19d89c534a13a67eef4ebdacb85593aa4696d06ca4925ac03ecfee7a5' }}
 
     steps:
       - name: Assert native ARM64 runner
@@ -39,10 +46,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $os = (Get-CimInstance Win32_OperatingSystem).OSArchitecture
-          $proc = $env:PROCESSOR_ARCHITECTURE
           $dotnet = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          "ImageOS=$env:ImageOS"
           "OSArchitecture=$os"
-          "PROCESSOR_ARCHITECTURE=$proc"
+          "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
           "RuntimeInformation.OSArchitecture=$dotnet"
           if ("$dotnet" -ne 'Arm64') { throw "Not a native ARM64 runner: $dotnet" }
 
@@ -52,8 +59,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
           Invoke-WebRequest -Uri $env:ASSET_URL -OutFile artifact/package.zip
-          $len = (Get-Item artifact/package.zip).Length
-          "Downloaded $($env:ASSET_URL) ($len bytes)"
+          "Downloaded $env:ASSET_URL ($((Get-Item artifact/package.zip).Length) bytes)"
 
       - name: Verify checksum
         shell: pwsh
@@ -71,13 +77,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Expand-Archive artifact/package.zip -DestinationPath expanded -Force
-          $files = Get-ChildItem expanded -Recurse -File
-          "Files: $($files.Count)"
+          "Files: $((Get-ChildItem expanded -Recurse -File).Count)"
           $exporter = Join-Path 'expanded' 'Binaries/Plugins/Exporter'
           if (-not (Test-Path $exporter)) { throw 'Binaries\Plugins\Exporter is missing; the product cannot start.' }
           "Plugins\Exporter present with $((Get-ChildItem $exporter -Force -Recurse -File).Count) file(s)"
-          $manifest = Get-ChildItem expanded -Recurse -Filter crt-manifest.json | Select-Object -First 1
-          if ($manifest) { "crt-manifest.json:"; Get-Content $manifest.FullName -Raw }
 
       - name: Scan every shipped image for PE machine
         shell: pwsh
@@ -90,10 +93,8 @@ jobs:
             try {
               $br = New-Object System.IO.BinaryReader($fs)
               $fs.Position = 0x3C
-              $peOffset = $br.ReadInt32()
-              $fs.Position = $peOffset
-              $sig = $br.ReadUInt32()
-              if ($sig -ne 0x00004550) { $bad += "$($f.Name): not a PE"; continue }
+              $fs.Position = $br.ReadInt32()
+              if ($br.ReadUInt32() -ne 0x00004550) { $bad += "$($f.Name): not a PE"; continue }
               $machine = $br.ReadUInt16()
               $count++
               '{0,-40} 0x{1:X4}' -f $f.Name, $machine
@@ -101,7 +102,8 @@ jobs:
             } finally { $fs.Dispose() }
           }
           "Scanned $count image(s)"
-          if ($bad.Count -gt 0) { $bad | ForEach-Object { "VIOLATION $_" }; throw "Non-ARM64 images in the published package: $($bad.Count)" }
+          if ($count -eq 0) { throw 'Scanned nothing: the scan cannot pass vacuously.' }
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { "VIOLATION $_" }; throw "Non-ARM64 images: $($bad.Count)" }
           'Every shipped image is ARM64 (0xAA64).'
 
       - name: Compile a coverage fixture with the native toolchain
@@ -166,7 +168,93 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: winport-independent-verification
+          name: winport-verification-native-arm64
           path: |
             coverage.xml
             fixture/fixture.cpp
+
+  x64-negative-control:
+    name: ${{ matrix.runner }} - the package must NOT run
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-latest]
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Assert this runner is x64, not ARM64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dotnet = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          "RunnerLabel=${{ matrix.runner }}"
+          "ImageOS=$env:ImageOS"
+          "OSArchitecture=$((Get-CimInstance Win32_OperatingSystem).OSArchitecture)"
+          "RuntimeInformation.OSArchitecture=$dotnet"
+          if ("$dotnet" -eq 'Arm64') { throw 'This control is only meaningful on a non-ARM64 runner.' }
+
+      - name: Download and verify the same asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Invoke-WebRequest -Uri $env:ASSET_URL -OutFile artifact/package.zip
+          $actual = (Get-FileHash artifact/package.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "bytes=$((Get-Item artifact/package.zip).Length)"
+          "actual=$actual"
+          if ($actual -ne $env:EXPECTED_SHA256.ToLowerInvariant()) { throw 'Checksum mismatch.' }
+          Expand-Archive artifact/package.zip -DestinationPath expanded -Force
+          'Checksum verified and package expanded.'
+
+      - name: Confirm the shipped executable is an ARM64 image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'expanded/Binaries/OpenCppCoverage.exe').Path
+          $fs = [System.IO.File]::OpenRead($exe)
+          try {
+            $br = New-Object System.IO.BinaryReader($fs)
+            $fs.Position = 0x3C
+            $fs.Position = $br.ReadInt32()
+            if ($br.ReadUInt32() -ne 0x00004550) { throw 'Not a PE image.' }
+            $machine = $br.ReadUInt16()
+          } finally { $fs.Dispose() }
+          'OpenCppCoverage.exe machine = 0x{0:X4}' -f $machine
+          if ($machine -ne 0xAA64) { throw ('Expected 0xAA64, found 0x{0:X4}' -f $machine) }
+
+      - name: The ARM64 binary must refuse to start on x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'expanded/Binaries/OpenCppCoverage.exe').Path
+          $started = $false
+          $native = $null
+          $message = $null
+          try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exe
+            $psi.Arguments = '--help'
+            $psi.UseShellExecute = $false
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $started = $true
+            $p.WaitForExit(30000) | Out-Null
+            try { $p.Kill() } catch { }
+          } catch [System.ComponentModel.Win32Exception] {
+            $native = $_.Exception.NativeErrorCode
+            $message = $_.Exception.Message
+          } catch {
+            $message = $_.Exception.Message
+          }
+
+          "Started=$started"
+          "NativeErrorCode=$native"
+          "Message=$message"
+
+          if ($started) {
+            throw 'VIOLATION: an ARM64 image started on an x64 runner. The package is not ARM64-only.'
+          }
+          if ($native -ne 193) {
+            throw "Expected ERROR_BAD_EXE_FORMAT (193) but got $native. The failure is not the architecture mismatch we are testing for."
+          }
+          'Correct: the shipped ARM64 binary is rejected by x64 Windows with ERROR_BAD_EXE_FORMAT (193).'
+          'This is what proves the positive ARM64 result is architecture-specific and not an x64 fallback.'
