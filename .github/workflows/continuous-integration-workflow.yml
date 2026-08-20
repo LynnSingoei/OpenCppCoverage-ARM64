@@ -66,6 +66,7 @@ jobs:
           .\Build\Scripts\Test-TestResults.ps1
           .\Build\Scripts\Test-ToolchainValidation.ps1
           .\Build\Scripts\Test-Arm64ProjectGraph.ps1
+          .\Build\Scripts\Test-SourceEncoding.ps1
 
       - name: Cache installed dependencies
         uses: actions/cache@v4
