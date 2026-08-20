@@ -150,6 +150,42 @@ genuine upstream Windows-1252, carrying bytes `e9 e0 e8`. Forcing UTF-8
 interpretation would corrupt exactly the special-character fixtures the tests
 rely on.
 
+## Source encoding is gated, because it broke the build once
+
+An intermediate commit on this port (`bf5cdc1`) re-saved
+`CppCoverageTest/CodeCoverageRunnerTest.cpp` as BOM-less UTF-8. The accented
+bytes in its `#include "TestCoverageConsole/FileWithSpecialCharéàè.hpp"` line
+went from `e9 e0 e8` (Windows-1252, 19184 bytes) to `c3 a9 c3 a0 c3 a8` (UTF-8,
+19203 bytes). MSVC decodes a BOM-less file with the active code page, so on a
+1252 host it looked for a mojibake'd path and failed with:
+
+```
+CodeCoverageRunnerTest.cpp(49,10): fatal error C1083: Cannot open include file
+```
+
+`Build/Scripts/SourceEncoding.ps1` and `Test-SourceEncoding.ps1` now run before
+restore in every job. The gate reads raw bytes and classifies each tracked
+source as `ascii`, `ansi`, `utf8-bom`, or `utf8-no-bom`. It rejects only two
+things: a non-ASCII source with no BOM that is valid UTF-8, and a non-ASCII
+quoted include that does not resolve on disk under the encoding MSVC would
+actually use. Windows-1252 sources are explicitly accepted, so the upstream
+files above are not asked to change.
+
+It also locks an inventory of the six non-ASCII sources and their encodings, so
+"normalizing" one of them fails the build instead of silently changing what the
+compiler reads. The gate is verified against the real `bf5cdc1` bytes, not just
+synthetic fixtures.
+
+Two measurement traps are worth recording, because both produced a wrong
+conclusion during this work:
+
+- `GET /repos/.../contents/...` transcodes text to UTF-8. It reported the
+  Windows-1252 and the UTF-8 revision of this file as identical, and its `size`
+  field disagreed with the length of its own base64 payload. Use
+  `GET /git/blobs/<sha>`, or compare git blob SHAs, for byte-level claims.
+- In PowerShell, `git cat-file blob ... > file` decodes and re-encodes through
+  the console encoding. Byte-level checks must use `[IO.File]::ReadAllBytes`.
+
 ## How a green run is guaranteed to be real
 
 A previous CI run reported success while `CppCoverageTest` had exited 1 with
