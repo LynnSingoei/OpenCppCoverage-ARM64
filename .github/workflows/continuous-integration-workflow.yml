@@ -23,6 +23,7 @@ jobs:
             package_platform: x86
             triplet: x86-windows
             artifact: windows-x86
+            host_architecture: x64
           - name: Windows x64 compatibility
             runner: windows-2022
             platform: x64
@@ -30,6 +31,7 @@ jobs:
             package_platform: x64
             triplet: x64-windows
             artifact: windows-x64
+            host_architecture: x64
           - name: Native Windows ARM64
             runner: windows-11-arm
             platform: ARM64
@@ -37,6 +39,7 @@ jobs:
             package_platform: ARM64
             triplet: arm64-windows
             artifact: windows-arm64
+            host_architecture: arm64
 
     steps:
       - name: Checkout
@@ -81,6 +84,7 @@ jobs:
             -Platform ${{ matrix.platform }} `
             -RequiredVCToolsVersion 14.44.35207 `
             -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -PreferredToolArchitecture ${{ matrix.host_architecture }} `
             -LogPath artifacts\logs\toolchain-restore-${{ matrix.platform }}.log
           & .\InstallThirdPartyLibraries.ps1 -Triplet ${{ matrix.triplet }} 2>&1 |
             Tee-Object artifacts\logs\restore-${{ matrix.platform }}.log
@@ -93,10 +97,12 @@ jobs:
             -Platform ${{ matrix.platform }} `
             -RequiredVCToolsVersion 14.44.35207 `
             -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -PreferredToolArchitecture ${{ matrix.host_architecture }} `
             -LogPath artifacts\logs\toolchain-Debug-${{ matrix.platform }}.log
           $msbuild = (Get-Command msbuild.exe).Source
           & $msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=${{ matrix.platform }} `
             /p:PlatformToolset=v143 `
+            /p:PreferredToolArchitecture=${{ matrix.host_architecture }} `
             /p:VCToolsVersion=14.44.35207 `
             /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Debug-${{ matrix.platform }}.binlog `
@@ -122,10 +128,12 @@ jobs:
             -Platform ${{ matrix.platform }} `
             -RequiredVCToolsVersion 14.44.35207 `
             -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -PreferredToolArchitecture ${{ matrix.host_architecture }} `
             -LogPath artifacts\logs\toolchain-Release-${{ matrix.platform }}.log
           $msbuild = (Get-Command msbuild.exe).Source
           & $msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
             /p:PlatformToolset=v143 `
+            /p:PreferredToolArchitecture=${{ matrix.host_architecture }} `
             /p:VCToolsVersion=14.44.35207 `
             /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Release-${{ matrix.platform }}.binlog `

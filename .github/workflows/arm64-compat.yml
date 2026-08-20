@@ -50,6 +50,7 @@ jobs:
           . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
             -Platform ARM64 -RequiredVCToolsVersion 14.44.35207 `
             -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -PreferredToolArchitecture arm64 `
             -LogPath artifacts\logs\toolchain-restore-ARM64.log
           & .\InstallThirdPartyLibraries.ps1 -Triplet arm64-windows 2>&1 |
             Tee-Object artifacts\logs\restore-ARM64.log
@@ -61,10 +62,12 @@ jobs:
           . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
             -Platform ARM64 -RequiredVCToolsVersion 14.44.35207 `
             -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -PreferredToolArchitecture arm64 `
             -LogPath artifacts\logs\toolchain-Debug-ARM64.log
           $msbuild = (Get-Command msbuild.exe).Source
           & $msbuild /m CppCoverage.sln /p:Configuration=Debug /p:Platform=ARM64 `
             /p:PlatformToolset=v143 `
+            /p:PreferredToolArchitecture=arm64 `
             /p:VCToolsVersion=14.44.35207 `
             /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Debug-ARM64.binlog `
@@ -89,10 +92,12 @@ jobs:
           . .\Build\Scripts\InitializeBuildEnvironment.ps1 `
             -Platform ARM64 -RequiredVCToolsVersion 14.44.35207 `
             -RequiredWindowsSdkVersion 10.0.26100.0 `
+            -PreferredToolArchitecture arm64 `
             -LogPath artifacts\logs\toolchain-Release-ARM64.log
           $msbuild = (Get-Command msbuild.exe).Source
           & $msbuild /m CppCoverage.sln /p:Configuration=Release /p:Platform=ARM64 `
             /p:PlatformToolset=v143 `
+            /p:PreferredToolArchitecture=arm64 `
             /p:VCToolsVersion=14.44.35207 `
             /p:WindowsTargetPlatformVersion=10.0.26100.0 `
             /bl:artifacts\logs\build-Release-ARM64.binlog `

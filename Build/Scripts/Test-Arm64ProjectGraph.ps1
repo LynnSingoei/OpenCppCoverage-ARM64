@@ -64,4 +64,18 @@ if ($cppCoverageTest -match
     throw "CppCliTest.cpp is excluded from the ARM64 test binary."
 }
 
+$directoryTargets = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot "Directory.Build.targets") -Raw
+if ($directoryTargets -notmatch
+    [regex]::Escape("'`$(PreferredToolArchitecture)' != 'arm64'")) {
+    throw "Directory.Build.targets does not enforce the native ARM64 compiler host."
+}
+
+$arm64Workflow = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot ".github\workflows\arm64-compat.yml") -Raw
+if ($arm64Workflow -notmatch '(?m)/p:PreferredToolArchitecture=arm64\s*`' -or
+    $arm64Workflow -notmatch '(?m)-PreferredToolArchitecture arm64\s*`') {
+    throw "The native ARM64 workflow does not pin PreferredToolArchitecture=arm64."
+}
+
 Write-Output "ARM64 graph includes all $($requiredProjects.Count) required projects in Debug and Release."

@@ -11,6 +11,10 @@ param(
     [string]$RequiredWindowsSdkVersion = "10.0.26100.0",
 
     [Parameter(Mandatory)]
+    [ValidateSet("x64", "arm64")]
+    [string]$PreferredToolArchitecture,
+
+    [Parameter(Mandatory)]
     [string]$LogPath
 )
 
@@ -45,12 +49,16 @@ $targetArchitecture = @{
     x64 = "x64"
     ARM64 = "arm64"
 }[$Platform]
-$hostArchitecture =
+$nativeHostArchitecture =
     if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") {
         "arm64"
     } else {
         "x64"
     }
+if ($PreferredToolArchitecture -ne $nativeHostArchitecture) {
+    throw "PreferredToolArchitecture '$PreferredToolArchitecture' does not match the native runner architecture '$nativeHostArchitecture'."
+}
+$hostArchitecture = $PreferredToolArchitecture
 $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
 if (-not (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) {
     throw "VsDevCmd.bat was not found: $vsDevCmd"
@@ -72,6 +80,7 @@ foreach ($line in $environmentOutput) {
     }
 }
 $env:VCPKG_ROOT = $requestedVcpkgRoot
+$env:PreferredToolArchitecture = $hostArchitecture
 
 foreach ($name in @(
     "VCToolsVersion", "VCToolsInstallDir", "WindowsSDKVersion",
@@ -160,6 +169,7 @@ $asanFiles = @(
 $log = @(
     "Platform=$Platform"
     "PlatformToolset=$PlatformToolset"
+    "PreferredToolArchitecture=$env:PreferredToolArchitecture"
     "HostArchitecture=$hostArchitecture"
     "TargetArchitecture=$targetArchitecture"
     "VisualStudioRoot=$vsRoot"
